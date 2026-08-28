@@ -101,6 +101,62 @@ test("loadSource marks a failing activate with the thrown message", async () => 
   EntropyLab.unregisterExtension("boom");
 });
 
+test("manifest hook declarations are validated by name but not by description", () => {
+  // Valid declaration.
+  const good = EntropyLab.validateManifest({
+    id: "hooked",
+    name: "Hooked",
+    version: "1.0.0",
+    hooks: { entropy: "read dice", wallets: "watch results", ui: "jump to ext" },
+  });
+  assert.equal(good.hooks.entropy, "read dice");
+  assert.equal(good.hooks.wallets, "watch results");
+  assert.equal(good.hooks.ui, "jump to ext");
+
+  // Unknown hook name is rejected.
+  assert.throws(
+    () =>
+      EntropyLab.validateManifest({
+        id: "bad-hook",
+        name: "x",
+        version: "1.0.0",
+        hooks: { sneak: "extra" },
+      }),
+    /hook "sneak" is not supported/,
+  );
+  // Hooks must be a plain object.
+  assert.throws(
+    () =>
+      EntropyLab.validateManifest({
+        id: "bad-hook2",
+        name: "x",
+        version: "1.0.0",
+        hooks: ["entropy"],
+      }),
+    /hooks must be an object/,
+  );
+  // A hook's description must be a short string.
+  assert.throws(
+    () =>
+      EntropyLab.validateManifest({
+        id: "bad-hook3",
+        name: "x",
+        version: "1.0.0",
+        hooks: { entropy: null },
+      }),
+    /"entropy" must be a short descriptive string/,
+  );
+});
+
+test("entropy hook throws for unknown modes", () => {
+  assert.throws(() => EntropyLab.entropy.set("nonexistent", "x"), /not available/);
+  assert.equal(EntropyLab.entropy.get("nonexistent"), null);
+});
+
+test("ui.openWorkspace validates permitted workspace ids", () => {
+  assert.throws(() => EntropyLab.ui.openWorkspace("nefarious"), /is not openable/);
+});
+
 test("loadSource rejects empty source", async () => {
   await assert.rejects(EntropyLab.loadSource("   "), /Extension source is empty/);
 });

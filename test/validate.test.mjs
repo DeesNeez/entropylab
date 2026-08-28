@@ -16,6 +16,7 @@ const versionedFile = `entropylab-${appVersion}.html`;
 
 const requiredFiles = [
   "README.md",
+  "AGENTS.md",
   "LICENSE",
   "package.json",
   "index.html",

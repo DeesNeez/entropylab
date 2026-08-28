@@ -2685,4 +2685,20 @@ function hodlInitSecretFieldAutoClear(){
   addEventListener("pagehide",clearSecretFields);
   addEventListener("pageshow",event=>{if(event.persisted)clearSecretFields()})
 }
-hodlInitWorkspace();hodlSeedInitialManagers();hodlInitKeyManager();hodlInitMsigManager();hodlInitClearActionState();hodlInitSecretFieldAutoClear();hodlInitTheme();hodlInitMasterFingerprintPreview();hodlInitDerivationControls();hodlInitSegmentedControls();})();
+hodlInitWorkspace();hodlSeedInitialManagers();hodlInitKeyManager();hodlInitMsigManager();hodlInitClearActionState();hodlInitSecretFieldAutoClear();hodlInitTheme();hodlInitMasterFingerprintPreview();hodlInitDerivationControls();hodlInitSegmentedControls();
+// Public accessor for the extension interface (defined in
+// extensions.js).
+// app.js internals stay private; only this simple view is exposed.
+Object.assign(globalThis, {
+  hodlAppState: {
+    get activeKeyIndex() {
+      return hodlActiveKey;
+    },
+    get keys() {
+      return hodlKeys;
+    },
+    get activeKey() {
+      return hodlActiveKey >= 0 ? hodlKeys[hodlActiveKey] : null;
+    },
+  },
+})})();
