@@ -26,6 +26,9 @@ Official website: [entropylab.online](https://entropylab.online)
 - Inspects PSBT v0 transactions, reports PSBT-provided amounts and fees, checks
   for repeated ECDSA nonces from the same public key, and can compare supported
   SegWit v0 SIGHASH_ALL signatures with RFC 6979, including Bitcoin Core-style low-r grinding, in a temporary session.
+- Loads third-party extensions locally (file or paste) with a documented
+  `EntropyLab` API, SHA-256 checksum verification, and custom panels. See
+  [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
 - Produces recovery information that can be saved or printed for offline use.
 - Exports a Bitcoin Core `wallet.dat` (SQLite descriptor wallet) with every
   derived output descriptor already imported — receive and change for each
@@ -88,6 +91,7 @@ files, run `npm run clean`.
 
 ```
 ├── assets/                 Static assets (logo, favicon)
+├── docs/                   Extension format and developer docs (EXTENSIONS.md)
 ├── scripts/
 │   ├── build.mjs           Zero-dependency build script
 │   └── verify-site.mjs     Site artifact verification (npm run verify)
@@ -99,6 +103,7 @@ files, run `npm run clean`.
 │   ├── sqlite-writer.test.mjs        Tests for the SQLite writer (verified with real SQLite)
 │   ├── ui-defaults.test.mjs          UI defaults and markup invariants
 │   ├── validate.test.mjs             Source and security invariants
+│   ├── extensions.test.mjs           Extension format and registry tests
 │   ├── wallet-export-reference.mjs   Bitcoin Core wallet.dat ground-truth fixture
 │   └── wallet-export.test.mjs        Tests for the wallet.dat export module
 ├── src/
@@ -107,6 +112,7 @@ files, run `npm run clean`.
 │   └── js/
 │       ├── vendor.js       Bundled third-party crypto (noble, scure, bip39)
 │       ├── app.js          Application logic
+│       ├── extensions.js   Extension loader, registry, and EntropyLab API
 │       ├── sqlite-writer.js Minimal SQLite database file writer
 │       ├── wallet-export.js Bitcoin Core wallet.dat descriptor export
 │       ├── online.js       Hosted-site behavior and version picker
@@ -129,6 +135,7 @@ npm test                    # run all tests, including the headless-Firefox suit
 npm run test:ci             # the CI subset: network-check, ui-defaults, source invariants
 npm run test:validate       # validate source and security invariants
 npm run test:browser        # test crypto, sanitization, networking, exports in headless Firefox
+npm run test:extensions     # extension format and registry tests
 npm run build               # compile src/ into the committed root files
 npm run verify              # verify the site artifact (snapshot, manifest, assets)
 npm run ci                  # run the CI test subset, build, and verify in order

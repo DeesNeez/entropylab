@@ -876,6 +876,24 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 .multisig-tab-icon svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .key-tab-label { display: inline-block; white-space: nowrap; }
 .key-tab-editing { height: 44px; }
+.ext-warning {
+  margin: 0 0 var(--space-component);
+  padding: 12px 14px;
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  color: var(--warn);
+  font-size: 14px; line-height: 1.5;
+}
+.ext-item { padding: 12px 0; border-top: 1px solid var(--border); }
+.ext-item-title { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.ext-item-meta { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.ext-status.bad { color: var(--danger); }
+.ext-status.ok { color: var(--ok); }
+.ext-error { color: var(--danger); }
+.ext-remove { margin-top: 8px; }
+#ext-panels { margin-top: var(--space-section); }
+.ext-panel h3 { margin-top: 0; }
+#ext-paste { font-family: var(--mono); min-height: 96px; }
 .key-tabs .key-tab-editing input.key-tab-name-input {
   width: auto; min-width: 72px; max-width: none; min-height: 28px; height: 28px; margin: 0; padding: 3px 7px;
   border: 1px solid var(--accent); border-radius: 6px;
