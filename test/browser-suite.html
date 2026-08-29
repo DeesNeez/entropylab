@@ -355,7 +355,7 @@
     assert(!document.querySelector('img[src="x"]') && window.__browserTestInjected !== true, "Input executed markup");
   });
 
-  await test("cards hide dealt values by default and one valid card enables a testing seed", async () => {
+  await test("cards hide dealt values by default and below-threshold transcripts cannot derive", async () => {
     await chooseMode("Cards");
     const cards = await until(() => document.getElementById("cards"), "card transcript input");
     const dealt = document.getElementById("dealt-cards");
@@ -378,11 +378,12 @@
     input(cards, "as");
     await wait(0);
     equal(cards.value, "AS");
-    assert(!document.getElementById("go").disabled, "One valid card did not enable derivation");
-    assert(document.getElementById("cards-meta").textContent.includes("seed available for testing"), "One-card warning is missing");
+    assert(document.getElementById("go").disabled, "One card below the entropy threshold enabled derivation");
+    const oneCardMeta = document.getElementById("cards-meta").textContent;
+    assert(oneCardMeta.includes("1 of 58 required cards") && oneCardMeta.includes("more required before deriving"), "One-card blocking status is missing");
     equal([...document.querySelectorAll("#dice-words [data-word]")].filter((word) => word.textContent !== "—").length, 24);
     const cardCopy = document.querySelector('[data-copy-seed-phrase]');
-    assert(cardCopy && !cardCopy.disabled && cardCopy.dataset.phrase.split(" ").length === 24, "Testing seed preview was not copyable");
+    assert(cardCopy && cardCopy.disabled && !cardCopy.dataset.phrase, "Below-threshold seed preview was copyable");
     assert(!dealt.hidden && dealt.textContent.includes("A"), "Show cards did not reveal the dealt card");
     equal(dealt.getBoundingClientRect().height, emptyHistoryHeight);
     input(cards, "AS ZZ");
@@ -394,7 +395,7 @@
     input(cards, "as, 10♥; td");
     await wait(0);
     equal(cards.value, "AS 10H TD");
-    assert(!document.getElementById("go").disabled, "Normalized valid cards did not enable derivation");
+    assert(document.getElementById("go").disabled, "Three normalized cards below the entropy threshold enabled derivation");
     cards.focus();
     const disallowed = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "B" });
     assert(cards.dispatchEvent(disallowed) === false, "A character unused by card transcripts was accepted from typing");

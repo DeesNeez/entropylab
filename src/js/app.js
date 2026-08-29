@@ -2672,12 +2672,14 @@ function hodlBinaryEntropy(value, targetWords = Pt) {
   return hodlNumberBaseEntropy(value, "bin", targetWords);
 }
 function hodlCardNeeded(targetWords = Pt) {
+  // Derived from the selected BIP39 entropy target, not policy constants:
+  // the smallest without-replacement deal whose entropy reaches the target.
+  // One deck tops out at ~225.6 bits, so a 256-bit seed finishes with extra
+  // cards from a second shuffled deck.
   let bits = hodlSeedConfig(targetWords).bits;
-  if (bits <= 128) return { first: 25, extra: 0 };
-  if (bits <= 160) return { first: 31, extra: 0 };
-  if (bits <= 192) return { first: 39, extra: 0 };
-  if (bits <= 224) return { first: 50, extra: 0 };
-  return { first: 52, extra: 6 };
+  for (let first = 1; first <= 52; first++) if (hodlCardWithoutReplacementBits(first) >= bits) return { first, extra: 0 };
+  for (let extra = 1; extra <= 52; extra++) if (hodlCardWithoutReplacementBits(52) + hodlCardWithoutReplacementBits(extra) >= bits) return { first: 52, extra };
+  return { first: 52, extra: 52 };
 }
 function hodlCardWithoutReplacementBits(count) {
   let bits = 0, n = Math.min(Math.max(0, Number(count) || 0), 52);
@@ -2758,10 +2760,13 @@ function hodlCardsEntropy(value, targetWords = Pt, coleman = false) {
   if (parsed.invalid.length) return { ok: false, error: `Cards use rank then suit, like AS, 10H, or TD. Ignored: ${parsed.invalid.slice(0, 8).join(" ")}`, notes, warnings, parsed };
   if (parsed.duplicates.length) return { ok: false, error: `Do not repeat a card in the same shuffle. Repeated: ${parsed.duplicates[0]}.`, notes, warnings, parsed };
   if (!parsed.cards.length) return { ok: false, error: "Deal at least one card from a shuffled deck.", notes, warnings, parsed };
-  let required = parsed.needed.first + parsed.needed.extra, hashInput = hodlCardsHashInput(parsed.cards, coleman);
+  let required = parsed.needed.first + parsed.needed.extra;
   notes.push(`${parsed.cards.length} card${parsed.cards.length === 1 ? "" : "s"} \u2248 ${parsed.bits.toFixed(1)} bits.`);
   notes.push(coleman ? "SHA-256 hashes Ian Coleman's suit-symbol transcript (A\u2660 2\u2663 T\u2666), then the first " + config.bits + " bits become the selected " + config.words + "-word seed. One shuffled deck is about 225.6 bits." : "SHA-256 hashes the ASCII transcript (AS 2C TD), then the first " + config.bits + " bits become the selected " + config.words + "-word seed. One shuffled deck is about 225.6 bits.");
-  if (parsed.cards.length < required) warnings.push(`Only ${parsed.cards.length} of ${required} recommended cards were entered. The ${config.words}-word phrase is deterministic, but its security cannot exceed the approximately ${parsed.bits.toFixed(1)} bits supplied. Use only for testing until the recommendation is met.`);
+  // Fail closed below the entropy target: hashing a short transcript cannot
+  // add entropy, and an enumerable transcript must never produce a wallet.
+  if (parsed.cards.length < required) return { ok: false, error: `Only ${parsed.cards.length} of ${required} required cards were entered. The transcript holds about ${parsed.bits.toFixed(1)} bits, but a ${config.words}-word seed needs ${config.bits}; hashing cannot add entropy, so a short transcript is trivially enumerable. Deal ${required - parsed.cards.length} more card${required - parsed.cards.length === 1 ? "" : "s"} before deriving a wallet.`, notes, warnings, parsed };
+  let hashInput = hodlCardsHashInput(parsed.cards, coleman);
   if (parsed.cards.length > required) notes.push(`All ${parsed.cards.length} cards, including extras, are included in the hash.`);
   let digest = Z(new TextEncoder().encode(hashInput)), bytes = digest.slice(0, config.bytes);
   return { ok: true, bytes, hex: M.encode(bytes), bits: config.bits, sourceBits: parsed.bits, method: coleman ? "ian-coleman-cards-sha256" : "cards-sha256", notes, warnings, parsed, hashInput };
@@ -2955,8 +2960,10 @@ function hodlUpdateCards() {
     if (parsed.cards.length && !parsed.invalid.length && !parsed.duplicates.length && !parsed.pending) preview = _n(Z(new TextEncoder().encode(hodlCardsHashInput(parsed.cards, hodlCardColemanSymbols))).slice(0, config.bytes)).split(" ");
   } catch {
   }
-  hodlRenderDiceWordGrid(wordsBox, preview, config.words, parsed.cards.length < required);
-  let meta = W("#cards-meta"), missing = Math.max(0, required - parsed.cards.length), extra = Math.max(0, parsed.cards.length - required), status = !parsed.cards.length ? `0 of ${required} recommended cards \xB7 0.0 bits estimated \xB7 Hashed card transcript` : missing ? `${parsed.cards.length} of ${required} recommended cards \xB7 ${parsed.bits.toFixed(1)} bits estimated \xB7 seed available for testing \xB7 ${missing} more recommended` : `${parsed.cards.length} card${parsed.cards.length === 1 ? "" : "s"} \xB7 ${parsed.bits.toFixed(1)} bits estimated \xB7 ready to derive${extra ? ` \xB7 all ${extra} extra card${extra === 1 ? " is" : "s are"} included` : ""}`;
+  // Below the entropy target the preview is display-only: not copyable, and
+  // derivation stays disabled through the entropy result (issue #85).
+  hodlRenderDiceWordGrid(wordsBox, preview, config.words, parsed.cards.length < required, parsed.cards.length >= required);
+  let meta = W("#cards-meta"), missing = Math.max(0, required - parsed.cards.length), extra = Math.max(0, parsed.cards.length - required), status = !parsed.cards.length ? `0 of ${required} required cards \xB7 0.0 bits estimated \xB7 Hashed card transcript` : missing ? `${parsed.cards.length} of ${required} required cards \xB7 ${parsed.bits.toFixed(1)} bits estimated \xB7 ${missing} more required before deriving` : `${parsed.cards.length} card${parsed.cards.length === 1 ? "" : "s"} \xB7 ${parsed.bits.toFixed(1)} bits estimated \xB7 ready to derive${extra ? ` \xB7 all ${extra} extra card${extra === 1 ? " is" : "s are"} included` : ""}`;
   if (config.words === 24 && parsed.cards.length >= 52 && missing) status += parsed.cards.length === 52 ? ` \xB7 shuffle again, then deal 6 more` : ` \xB7 second shuffle ${parsed.cards.length - 52} of 6`;
   if (parsed.pending) status += ` \xB7 finish ${parsed.pending.token} with a suit`;
   if (parsed.invalidEntries.length - (parsed.pending ? 1 : 0) > 0) {
@@ -3944,7 +3951,7 @@ function hodlCopySeedPhraseButton(button) {
   if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") navigator.clipboard.writeText(phrase).then(done).catch(fallback);
   else fallback();
 }
-function hodlRenderDiceWordGrid(container, words, targetWords = Pt, provisional = false) {
+function hodlRenderDiceWordGrid(container, words, targetWords = Pt, provisional = false, copyable = true) {
   if (!container) return;
   let config = hodlSeedConfig(targetWords), values = Array.isArray(words) ? words : [], fragment = document.createDocumentFragment();
   container.innerHTML = "";
@@ -3965,7 +3972,7 @@ function hodlRenderDiceWordGrid(container, words, targetWords = Pt, provisional 
     fragment.appendChild(slot);
   }
   container.appendChild(fragment);
-  let copy = container.closest("#form")?.querySelector("[data-copy-seed-phrase]"), phrase = hodlSeedPhraseCopyText(values, config.words);
+  let copy = container.closest("#form")?.querySelector("[data-copy-seed-phrase]"), phrase = copyable ? hodlSeedPhraseCopyText(values, config.words) : "";
   if (copy) {
     copy.disabled = !phrase;
     copy.dataset.phrase = phrase;
@@ -4204,7 +4211,7 @@ function hodlRenderKeyForm() {
     if (!direct) hodlCardSuit = hodlCardRank = "";
     let suitPad = hodlCardSuits.map((suit) => `<button type="button" class="card-suit${suit.red ? " is-red" : ""}" data-card-suit="${suit.code}" aria-label="${suit.label}" aria-pressed="false">${suit.symbol}</button>`).join("");
     let rankPad = direct ? hodlDirectCardRanks.map((rank) => `<button type="button" data-direct-card-rank="${rank}" aria-label="Enter rank ${rank}">${rank}</button>`).join("") : hodlCardRanks.map((rank) => `<button type="button" data-card-rank="${rank}" aria-label="${rank === "T" ? "10" : rank}">${rank === "T" ? "10" : rank}</button>`).join("");
-    let inputId = direct ? "direct-cards" : "cards", inputLabel = direct ? "Rank-only draw transcript" : "Card transcript", inputHelp = direct ? `For each of the first ${config.partialWords} words, shuffle and draw from A\u20138 three times, then A\u20134 once. Each four-character group selects one word; spaces separate the groups. The shorter final group supplies the remaining entropy bits, and EntropyLab calculates the BIP39 checksum bits.` : `Each valid card updates a deterministic test seed. For real security, ${config.words === 24 ? "deal all 52 unique cards, shuffle again, then deal 6 more" : `deal ${needed.first} unique cards without putting them back`}. SHA-256 hashes the ASCII transcript (AS 2C TD).`, placeholder = direct ? "A284 37A2 \u2026" : hodlCardColemanSymbols ? "A\u2660 2\u2663 10\u2665 T\u2666\u2026" : "AS 2C 10H TD\u2026";
+    let inputId = direct ? "direct-cards" : "cards", inputLabel = direct ? "Rank-only draw transcript" : "Card transcript", inputHelp = direct ? `For each of the first ${config.partialWords} words, shuffle and draw from A\u20138 three times, then A\u20134 once. Each four-character group selects one word; spaces separate the groups. The shorter final group supplies the remaining entropy bits, and EntropyLab calculates the BIP39 checksum bits.` : `Each valid card updates the provisional seed preview. Derivation unlocks once the entropy target is met: ${config.words === 24 ? "deal all 52 unique cards, shuffle again, then deal 6 more" : `deal ${needed.first} unique cards without putting them back`}. SHA-256 hashes the ASCII transcript (AS 2C TD).`, placeholder = direct ? "A284 37A2 \u2026" : hodlCardColemanSymbols ? "A\u2660 2\u2663 10\u2665 T\u2666\u2026" : "AS 2C 10H TD\u2026";
     at.innerHTML = `
       <p class="label">How to turn cards into a ${config.words}-word seed</p>
       <div class="choice-grid">

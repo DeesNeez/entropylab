@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mnemonicToEntropy, validateMnemonic } from "@scure/bip39";
+import { entropyToMnemonic, mnemonicToEntropy, validateMnemonic } from "@scure/bip39";
 import { wordlist as bip39English } from "@scure/bip39/wordlists/english.js";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -45,7 +45,11 @@ const hodlSeedLengths = {
 function hodlSeedConfig(words = 12) {
   return hodlSeedLengths[words];
 }
-const hodlCardNeeded = new Function("hodlSeedConfig", `${loadSlice("hodlCardNeeded")}; return hodlCardNeeded;`)(hodlSeedConfig);
+const hodlCardNeeded = new Function(
+  "hodlSeedConfig",
+  "hodlCardWithoutReplacementBits",
+  `${loadSlice("hodlCardNeeded")}; return hodlCardNeeded;`,
+)(hodlSeedConfig, hodlCardWithoutReplacementBits);
 const hodlParseCards = new Function(
   "hodlCardNeeded",
   "hodlNormalizeCardToken",
@@ -179,26 +183,60 @@ test("hashed transcript is SHA-256 of ASCII codes", () => {
 
 test("Ian Coleman hashed cards SHA-256 the suit-symbol transcript", () => {
   assert.equal(hodlCardsHashInput(["AS", "2C", "TD"], true), "A\u2660 2\u2663 T\u2666");
-  const ascii = hodlCardsEntropy("AS 2C TD", 12, false);
-  const coleman = hodlCardsEntropy("AS 2C TD", 12, true);
+  const cards = DECK.slice(0, 25);
+  const ascii = hodlCardsEntropy(cards.join(" "), 12, false);
+  const coleman = hodlCardsEntropy(cards.join(" "), 12, true);
   assert.equal(ascii.ok, true);
   assert.equal(coleman.ok, true);
   assert.equal(ascii.method, "cards-sha256");
   assert.equal(coleman.method, "ian-coleman-cards-sha256");
   assert.notEqual(ascii.hex, coleman.hex);
-  assert.equal(coleman.hashInput, "A\u2660 2\u2663 T\u2666");
-  assert.equal(createHash("sha256").update("A\u2660 2\u2663 T\u2666", "utf8").digest("hex").slice(0, 32), coleman.hex);
+  assert.equal(coleman.hashInput, hodlCardsHashInput(cards, true));
+  assert.equal(createHash("sha256").update(coleman.hashInput, "utf8").digest("hex").slice(0, 32), coleman.hex);
 });
 
-test("one valid card produces a deterministic testing seed", () => {
-  const entropy = hodlCardsEntropy("AS", 24);
-  assert.equal(entropy.ok, true);
-  assert.equal(entropy.bytes.length, 32);
-  assert.equal(entropy.parsed.cards.length, 1);
-  assert.match(entropy.warnings.join(" "), /Only 1 of 58 recommended cards/);
-  assert.match(entropy.warnings.join(" "), /Use only for testing/);
+test("below-threshold card transcripts fail closed and never produce a seed", () => {
+  // One card: 52 enumerable candidates must not produce a wallet (issue #85).
+  const one = hodlCardsEntropy("AS", 24);
+  assert.equal(one.ok, false);
+  assert.equal(one.bytes, undefined);
+  assert.equal(one.parsed.cards.length, 1);
+  assert.match(one.error, /Only 1 of 58 required cards/);
+  assert.match(one.error, /trivially enumerable/);
   assert.equal(hodlCardsEntropy("AS AS", 24).ok, false);
   assert.equal(hodlCardsEntropy("ZZ", 24).ok, false);
+});
+
+test("entropy thresholds are enforced at the exact boundary for every phrase length", () => {
+  // Required counts come from hodlCardWithoutReplacementBits, not constants.
+  for (const [words, first, extra] of [[12, 25, 0], [15, 31, 0], [18, 39, 0], [21, 50, 0], [24, 52, 6]]) {
+    const needed = hodlCardNeeded(words);
+    assert.equal(needed.first, first);
+    assert.equal(needed.extra, extra);
+    const required = first + extra;
+    // 24 words span two shuffles: the first 52 cards come from one deck and
+    // the extra cards from a fresh one (repeats across shuffles are allowed).
+    const deal = (count) => count <= 52 ? DECK.slice(0, count).join(" ") : `${DECK.join(" ")} ${DECK.slice(0, count - 52).join(" ")}`;
+    const below = hodlCardsEntropy(deal(required - 1), words);
+    assert.equal(below.ok, false, `${words} words accepted ${required - 1} cards`);
+    assert.match(below.error, new RegExp(`Only ${required - 1} of ${required} required cards`));
+    const full = hodlCardsEntropy(deal(required), words);
+    assert.equal(full.ok, true, `${words} words rejected ${required} cards`);
+    assert.equal(full.bytes.length, words / 3 * 4);
+  }
+});
+
+test("a complete card transcript keeps deriving the expected deterministic seed", () => {
+  // 24 words: full deck plus six cards from a second shuffle.
+  const transcript = `${DECK.join(" ")} ${DECK.slice(0, 6).join(" ")}`;
+  const entropy = hodlCardsEntropy(transcript, 24);
+  assert.equal(entropy.ok, true);
+  assert.equal(entropy.bytes.length, 32);
+  const expected = createHash("sha256").update(transcript, "utf8").digest();
+  assert.deepEqual([...entropy.bytes], [...expected.subarray(0, 32)]);
+  const mnemonic = entropyToMnemonic(entropy.bytes, bip39English);
+  assert.equal(mnemonic.split(" ").length, 24);
+  assert.ok(validateMnemonic(mnemonic, bip39English));
 });
 
 test("hashed-card controls accept either suit or rank first and filter the other row", () => {
