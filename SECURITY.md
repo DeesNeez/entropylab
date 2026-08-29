@@ -38,14 +38,16 @@ material. Its security posture rests on the following model:
 - Wallet security depends on the quality and secrecy of the entropy, seed
   phrase, passphrase, or private key supplied by the user, and on the
   integrity of the machine it runs on.
-- Low-entropy dice and card transcripts are accepted intentionally so the
-  calculator can be used for deterministic tests, demonstrations, and
-  recovery experiments. EntropyLab does not claim that hashing a short input
-  makes it secure. When the entered transcript is below the recommended
-  entropy target, the result displays a prominent warning with the estimated
-  supplied entropy and says to use it only for testing. Users who intend to
-  secure funds must meet the displayed roll/card recommendation and verify
-  their procedure independently.
+- Low-entropy dice transcripts are accepted intentionally so the calculator
+  can be used for deterministic tests, demonstrations, and recovery
+  experiments; the result displays a prominent warning with the estimated
+  supplied entropy and says to use it only for testing. Hashed card
+  transcripts instead fail closed: below the card count required for the
+  selected phrase length, derivation, seed copying, and wallet export stay
+  disabled, because a short card transcript is trivially enumerable and
+  hashing a short input does not make it secure. Users who intend to secure
+  funds must meet the displayed roll/card requirement and verify their
+  procedure independently.
 - The single-file design inlines all scripts (`script-src 'unsafe-inline'`),
   and the secp256k1 WebAssembly module adds `wasm-unsafe-eval` to the
   content security policy: Chromium and WebKit engines refuse to compile a

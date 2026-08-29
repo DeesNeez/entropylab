@@ -164,8 +164,9 @@ test("third-party actions are immutable and deployment is test-gated", () => {
 
 test("the intentional low-entropy recovery behavior is documented", () => {
   const security = read("SECURITY.md");
-  assert.match(security, /low-entropy dice and card transcripts are accepted intentionally/i);
-  assert.match(security, /does not claim that hashing a short input\s+makes it secure/i);
+  assert.match(security, /low-entropy dice transcripts are accepted intentionally/i);
+  assert.match(security, /card\s+transcripts instead fail closed/i);
+  assert.match(security, /hashing a short input\s+does not make it secure/i);
 });
 
 const htmlFiles = [appFile];
