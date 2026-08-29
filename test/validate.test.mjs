@@ -131,6 +131,21 @@ test("GitHub Pages aliases the canonical app at the site root only during deploy
   assert.doesNotMatch(workflow, /refs\/heads\/main/, "workflow must not target the retired branch name");
 });
 
+test("the standalone site inlines the full secp256k1 WASM payload", () => {
+  ensureBuild();
+  const source = read("src/js/secp256k1-wasm-b64.js");
+  const payload = source.match(/export const SECP256K1_WASM_B64 =\s*"([A-Za-z0-9+/=]+)";/);
+  assert.ok(payload, "generated module exports the base64 payload");
+  // entropylab.html must hold the curve engine itself; otherwise the
+  // single-file build would fetch it or secretly depend on another file.
+  const html = read(appFile);
+  assert.ok(
+    html.includes(payload[1]),
+    "entropylab.html must inline the full base64 WASM payload",
+  );
+  assert.doesNotMatch(html, /secp256k1-wasm-b64\.js/, "no file reference to the generated module");
+});
+
 test("the app never fetches, so the CSP forbids connections", () => {
   assert.match(read("src/index.html"), /connect-src 'none'/);
   // The secp256k1 WebAssembly module compiles inline; the CSP must allow it
