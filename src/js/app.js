@@ -314,11 +314,21 @@ function Ns(e) {
   if (!$o(e)) throw new Error("Not a valid Casascius mini private key.");
   return Z(new TextEncoder().encode(e.trim()));
 }
+// bitaddress.org 2.9.6+ hashes the passphrase exactly as entered (UTF-8,
+// whitespace included); earlier releases trimmed boundary whitespace first.
+// Recovery must pick a convention explicitly so neither normalization is
+// applied silently (issue #94).
+function hodlBrainWalletPassphrase(raw, convention) {
+  let text = String(raw ?? "");
+  if (!text.trim()) throw new Error("Enter the brain-wallet passphrase.");
+  return convention === "legacy" ? text.trim() : text;
+}
 function Io(e, t, r) {
   let n = [], o = [], i, s = null, c = t, a = e.trim();
   if (r === "brain") {
-    if (!a) throw new Error("Enter the brain-wallet passphrase.");
-    o.push("Brain wallets are dangerous. Humans pick guessable phrases. Anyone who guesses the phrase takes the coins. Prefer dice or a hardware-verified seed."), i = Z(new TextEncoder().encode(a)), n.push("bitaddress.org-style brain wallet: SHA-256 of the passphrase is the private key.");
+    let E = hodlBrainWalletPassphrase(e, hodlBrainConvention);
+    o.push("Brain wallets are dangerous. Humans pick guessable phrases. Anyone who guesses the phrase takes the coins. Prefer dice or a hardware-verified seed."), i = Z(new TextEncoder().encode(E)), n.push(hodlBrainConvention === "legacy" ? "Legacy bitaddress.org brain wallet (before 2.9.6): boundary whitespace trimmed, then SHA-256 of the passphrase is the private key." : "bitaddress.org 2.9.6+ brain wallet: SHA-256 of the exact passphrase text, whitespace included, is the private key.");
+    if (String(e ?? "") !== a) o.push(hodlBrainConvention === "legacy" ? "The passphrase has leading or trailing whitespace; it is trimmed before hashing under the legacy convention." : "The passphrase has leading or trailing whitespace; it is kept and hashed under the bitaddress.org 2.9.6+ convention. Switch the convention to Legacy if this wallet predates 2.9.6.");
   } else if (r === "minikey" || $o(a)) i = Ns(a), s = a, n.push("Casascius mini private key decoded via SHA-256.");
   else if (/^[5KL9c][1-9A-HJ-NP-Za-km-z]{50,51}$/.test(a)) {
     let E = Ls(a);
@@ -597,7 +607,7 @@ ec.innerHTML = `
   </div>
 `;
 if (/^(www\.)?entropylab\.online$/i.test(location.hostname)) document.getElementById("online-warning")?.removeAttribute("hidden");
-var hodlKeyModes = ["dice", "cards", "hex", "seed", "key"], hodlCardRanks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K"], hodlDirectCardRanks = ["A", "2", "3", "4", "5", "6", "7", "8"], hodlCardSuits = [{ code: "S", symbol: "\u2660", label: "Spades", red: false }, { code: "H", symbol: "\u2665", label: "Hearts", red: true }, { code: "C", symbol: "\u2663", label: "Clubs", red: false }, { code: "D", symbol: "\u2666", label: "Diamonds", red: true }], hodlCardSuit = "", hodlCardRank = "", hodlCardMethod = "hashed", hodlSeedMethod = "words", hodlSeedZeroIndexed = false, hodlCardColemanSymbols = false, Ne = "dice", ge = "coldcard", Pt = 24, hodlEntropyFormat = "hex", hodlDiceCoinPositions = [], ft = "", re = null, Ge = false, Zs = W("#modes"), at = W("#form"), dr = W("#out");
+var hodlKeyModes = ["dice", "cards", "hex", "seed", "key"], hodlCardRanks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K"], hodlDirectCardRanks = ["A", "2", "3", "4", "5", "6", "7", "8"], hodlCardSuits = [{ code: "S", symbol: "\u2660", label: "Spades", red: false }, { code: "H", symbol: "\u2665", label: "Hearts", red: true }, { code: "C", symbol: "\u2663", label: "Clubs", red: false }, { code: "D", symbol: "\u2666", label: "Diamonds", red: true }], hodlCardSuit = "", hodlCardRank = "", hodlCardMethod = "hashed", hodlSeedMethod = "words", hodlSeedZeroIndexed = false, hodlCardColemanSymbols = false, hodlBrainConvention = "exact", Ne = "dice", ge = "coldcard", Pt = 24, hodlEntropyFormat = "hex", hodlDiceCoinPositions = [], ft = "", re = null, Ge = false, Zs = W("#modes"), at = W("#form"), dr = W("#out");
 hodlKeyModes.forEach((e) => {
   let t = document.createElement("button"), active = e === Ne;
   t.type = "button";
@@ -3417,6 +3427,8 @@ function hodlUpdatePrivateKeyInputPresentation() {
   let input = document.getElementById("key");
   if (!input) return;
   let kind = hodlNormalizePrivateKeyKind(document.querySelector('input[name="kk"]:checked')?.value, input.value), network = hodlSelectedNetwork(document.getElementById("network"));
+  let convention = document.getElementById("brain-convention");
+  if (convention) convention.hidden = kind !== "brain";
   input.placeholder = hodlPrivateKeyPlaceholder(kind, network);
   input.setAttribute("inputmode", kind === "hex-key" ? "text" : "text");
   input.setAttribute("autocapitalize", "off");
@@ -4516,6 +4528,11 @@ function hodlRenderKeyForm() {
     <label class="choice"><input type="radio" name="kk" value="minikey" /><span><strong>Mini key</strong><span class="desc">Casascius-style short key.</span></span></label>
     <label class="choice"><input type="radio" name="kk" value="brain" /><span><strong>Brain wallet</strong><span class="desc">Unsafe. Use only to recover an old passphrase wallet.</span></span></label>
     </div>
+    <div class="choice-grid" id="brain-convention" hidden>
+    <p class="label">Brain-wallet hashing convention</p>
+    <label class="choice"><input type="radio" name="brain-conv" value="exact" ${hodlBrainConvention === "exact" ? "checked" : ""} /><span><strong>bitaddress.org 2.9.6+ (exact text)</strong><span class="desc">SHA-256 of the passphrase exactly as entered, including any leading or trailing whitespace.</span></span></label>
+    <label class="choice"><input type="radio" name="brain-conv" value="legacy" ${hodlBrainConvention === "legacy" ? "checked" : ""} /><span><strong>Legacy bitaddress.org (before 2.9.6)</strong><span class="desc">Trim leading and trailing whitespace before hashing.</span></span></label>
+    </div>
     <p class="label" id="private-key-input-label">Private key or recovery passphrase</p>
     <p class="muted" id="private-key-input-help">Enter the value matching the selected format. Brain wallets are for recovery only.</p>
     ${hodlPrivateKeyKeyboardToggleMarkup()}
@@ -4641,7 +4658,10 @@ function hodlPrivateKeyInputAnalysis(value, kind, network) {
   let selected = hodlNormalizePrivateKeyKind(kind, value), entries = hodlPrivateKeyCharacterEntries(value), invalidRanges = [], ready = false, status = "", first = entries[0], last = entries.at(-1), markAll = () => {
     if (first && last) invalidRanges.push([first.start, last.end]);
   };
-  if (selected === "brain") return { invalidRanges, ready: Boolean(String(value ?? "").length), status: String(value ?? "").length ? "Recovery passphrase entered \xB7 brain wallets are unsafe \xB7 recovery only" : "No recovery passphrase entered \xB7 brain wallets are unsafe \xB7 recovery only", kind: selected };
+  if (selected === "brain") {
+    let raw = String(value ?? ""), boundary = raw.trim().length > 0 && raw !== raw.trim(), convention = hodlBrainConvention === "legacy" ? "legacy bitaddress.org: boundary whitespace is trimmed before hashing" : "bitaddress.org 2.9.6+: the exact text is hashed";
+    return { invalidRanges, ready: Boolean(raw.trim()), status: raw.trim() ? `Recovery passphrase entered \xB7 ${convention}${boundary ? hodlBrainConvention === "legacy" ? " \xB7 boundary whitespace present \xB7 trimmed" : " \xB7 boundary whitespace present \xB7 kept" : ""} \xB7 brain wallets are unsafe \xB7 recovery only` : "No recovery passphrase entered \xB7 brain wallets are unsafe \xB7 recovery only", kind: selected };
+  }
   if (selected === "hex-key") {
     let prefixed = entries[0]?.character === "0" && /^x$/i.test(entries[1]?.character || ""), characters = entries.slice(prefixed ? 2 : 0), valid = characters.filter((entry) => /^[0-9a-fA-F]$/.test(entry.character)), invalid2 = characters.filter((entry) => !/^[0-9a-fA-F]$/.test(entry.character)), excess2 = valid.slice(64);
     invalidRanges.push(...invalid2.map((entry) => [entry.start, entry.end]), ...excess2.map((entry) => [entry.start, entry.end]));
@@ -4775,6 +4795,12 @@ function hodlBindKeyFields() {
     document.querySelectorAll("input[name=kk]").forEach((radio) => {
       radio.addEventListener("input", change);
       radio.addEventListener("change", change);
+    });
+    document.querySelectorAll("input[name=brain-conv]").forEach((radio) => {
+      radio.addEventListener("change", () => {
+        hodlBrainConvention = radio.value === "legacy" ? "legacy" : "exact";
+        hodlRenderPrivateKeyInputState(key);
+      });
     });
     document.getElementById("network")?.addEventListener("change", apply);
     apply();
