@@ -429,13 +429,13 @@ ec.innerHTML = `
       <div class="master-fingerprint-preview" id="master-fingerprint-preview" role="status" aria-live="polite" aria-atomic="true">
         <p class="label master-fingerprint-heading">Master fingerprint</p>
         <div class="master-fingerprint-card is-disabled" id="base-master-fingerprint-card" role="group" data-state="unavailable" aria-label="Base seed master fingerprint unavailable">
-          <img class="master-fingerprint-lifehash" id="base-master-fingerprint-lifehash" alt="" width="96" height="96" hidden />
+          <img class="master-fingerprint-lifehash" id="base-master-fingerprint-lifehash" alt="" width="43" height="43" hidden />
           <span class="master-fingerprint-label">Base seed</span>
           <code class="master-fingerprint-value" id="base-master-fingerprint"></code>
         </div>
         <span class="master-fingerprint-arrow is-disabled" id="master-fingerprint-arrow" aria-hidden="true">\u2192</span>
         <div class="master-fingerprint-card master-fingerprint-derived is-disabled" id="passphrase-master-fingerprint-card" role="group" data-state="unavailable" aria-label="With passphrase master fingerprint unavailable">
-          <img class="master-fingerprint-lifehash" id="passphrase-master-fingerprint-lifehash" alt="" width="96" height="96" hidden />
+          <img class="master-fingerprint-lifehash" id="passphrase-master-fingerprint-lifehash" alt="" width="43" height="43" hidden />
           <span class="master-fingerprint-label">With passphrase</span>
           <code class="master-fingerprint-value" id="passphrase-master-fingerprint"></code>
         </div>

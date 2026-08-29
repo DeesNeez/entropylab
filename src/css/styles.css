@@ -647,7 +647,7 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
    hex, so two fingerprints can be compared at a glance. Crisp pixels, no
    interpolation, per the LifeHash presentation guidance. */
 .master-fingerprint-lifehash {
-  float: right; width: 48px; height: 48px; margin: 0 0 4px 8px; border-radius: 4px;
+  float: left; width: 43px; height: 43px; margin: 0 8px 4px 0; border-radius: 4px;
   image-rendering: pixelated; background: #fff;
 }
 .master-fingerprint-label {
