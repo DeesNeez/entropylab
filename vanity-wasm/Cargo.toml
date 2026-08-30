@@ -15,8 +15,8 @@ crate-type = ["cdylib"]
 # tables are kept because grinding speed is the point of this crate.
 secp256k1-sys = { version = "=0.14.0" }
 # RustCrypto hashes, pure Rust: SHA-256 turns the candidate passphrase into
-# the private key (brain-wallet convention), RIPEMD-160 is the second half of
-# HASH160 for the P2PKH address.
+# the private key (brain-wallet convention) and hashes scripts; RIPEMD-160 is
+# the second half of HASH160 for the hash-based address types.
 sha2 = { version = "=0.10.9" }
 ripemd = { version = "=0.1.3" }
 

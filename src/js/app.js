@@ -11,7 +11,7 @@ import { wordlist as bip39English } from "@scure/bip39/wordlists/english.js";
 import { Address as hodlBitcoinAddress, NETWORK as Ie, OutScript as Oe, TEST_NETWORK as mo, p2pkh as ir, p2sh as Jr, p2tr as en, p2wpkh as Tt, utils as bitcoinUtils } from "@scure/btc-signer";
 import { renderSVG as Xs } from "uqr";
 import { BIP39_LANGUAGE_ENGLISH, BIP85_APPS, bip85Path, deriveApplication, parseHardenedIndex, wipeBip85Result, wipeBytes as hodlWipeBytes } from "./bip85.js";
-import { VanityGrinder, estimateVanityWork, validateVanityPrefix, validateVanityRange } from "./vanity.js";
+import { VANITY_SCRIPTS, VanityGrinder, estimateVanityWork, validateVanityPrefix, validateVanityRange, validateVanitySalt, vanitySessionSalt } from "./vanity.js";
 const Ae = Object.freeze(bip39English);
 const tr = Z;
 const rr = (bytes) => ripemd160(Z(bytes));
@@ -508,6 +508,47 @@ ec.innerHTML = `
         <button class="btn clear-current-action" id="wipe" type="button" disabled aria-disabled="true">Clear Current Key</button>
       </div>
       <p class="err" id="error"></p>
+      <details class="vanity-inline no-print" id="vanity-card">
+        <summary class="vanity-summary"><span><span class="kicker">Same counter, same address.</span><span class="vanity-summary-title" id="vanity-heading">Grind a vanity address</span></span><span class="muted vanity-summary-note">Optional \xB7 uses the selected script type</span><span class="vanity-chevron" aria-hidden="true">▼</span></summary>
+        <p class="muted vanity-intro" id="vanity-intro">A counter becomes the passphrase: base-62 over a-zA-Z0-9 in odometer order ("aaa\u2026", "aab\u2026"). Each passphrase is hashed with SHA-256 into a private key (the brain-wallet convention) whose selected address is checked against your prefix. This does not invent entropy \u2014 it is a calculator over a counter you choose, and every result reproduces from its counter. If this key has a passphrase entered above, it prefixes every candidate verbatim \u2014 a found passphrase is that passphrase followed by the counter characters. Otherwise, any entropy entered above prefixes candidates as a SHA-256 digest, so the same counters only reproduce while those inputs stay unchanged.</p>
+        <p class="muted vanity-intro">Vanity passphrases are brain wallets: with no passphrase or entropy above, anyone grinding the same counter space finds the same keys. Enter a passphrase above first so every candidate starts with it verbatim. Use the longest practical passphrase length, and paste a found passphrase into Key Derivation \u2192 Private key to see every script type and the WIF.</p>
+        <p class="muted" id="vanity-salt-note">No passphrase or entropy above \u2014 candidates use the public counter mapping, and anyone grinding the same space finds the same keys.</p>
+        <div class="vanity-grid">
+          <label class="field">Address prefix
+            <input id="vanity-prefix" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="bc1q\u2026" aria-describedby="vanity-prefix-help">
+            <span class="field-note" id="vanity-prefix-help">Native SegWit P2WPKH prefix, starts with \u201Cbc1q\u201D. Live-filtered to lowercase bech32 characters; each free character multiplies the work by ~32.</span>
+          </label>
+          <label class="field">Passphrase length
+            <input id="vanity-length" type="number" min="1" max="32" step="1" inputmode="numeric" value="8" aria-describedby="vanity-length-help">
+            <span class="field-note" id="vanity-length-help">Characters a-zA-Z0-9. 62^10 counters fill the 64-bit counter; longer passphrases grind their low range.</span>
+          </label>
+        </div>
+        <div class="vanity-grid">
+          <label class="field">Start counter
+            <input id="vanity-start" inputmode="numeric" autocomplete="off" spellcheck="false" value="0" aria-describedby="vanity-start-help">
+            <span class="field-note" id="vanity-start-help">First counter tried. Counter 0 is passphrase "aaa\u2026".</span>
+          </label>
+          <label class="field">Range size
+            <input id="vanity-count" inputmode="numeric" autocomplete="off" spellcheck="false" value="1000000" aria-describedby="vanity-count-help">
+            <span class="field-note" id="vanity-count-help">Candidates to grind. After a run, Start continues where the range ended.</span>
+          </label>
+          <label class="field">Workers
+            <input id="vanity-workers" type="number" min="1" max="64" step="1" inputmode="numeric" value="1" aria-describedby="vanity-workers-help">
+            <span class="field-note" id="vanity-workers-help">One per CPU core is fastest; defaults to this device's core count.</span>
+          </label>
+        </div>
+        <p class="muted" id="vanity-estimate" aria-live="polite"></p>
+        <div class="row current-item-actions">
+          <button class="btn primary" id="vanity-go" type="button">Start grinding</button>
+          <div class="derive-progress" id="vanity-progress" role="progressbar" aria-label="Vanity grinding progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0% complete" hidden><span class="derive-progress-track"><span class="derive-progress-bar"></span></span><span class="derive-progress-label">0%</span></div>
+          <button class="btn secondary" id="vanity-stop" type="button" disabled>Stop</button>
+          <button class="btn clear-current-action" id="vanity-wipe" type="button" disabled aria-disabled="true">Clear results</button>
+        </div>
+        <p class="muted" id="vanity-status" aria-live="polite">Idle. No range has been ground this session.</p>
+        <p class="err" id="vanity-error" role="alert"></p>
+        <div id="vanity-out" aria-live="polite"></div>
+        <p class="muted">Found passphrases remain in this page only. Memory clearing is best-effort; close the page before reconnecting the computer.</p>
+      </details>
     </section>
     <section class="card no-print" id="bip85-card" role="tabpanel" hidden>
       <div class="kicker">One seed. Many children.</div>
@@ -681,47 +722,6 @@ ec.innerHTML = `
       <p class="err" id="psbt-error" role="alert"></p>
       <div id="psbt-out" aria-live="polite"></div>
       <p class="muted">Session keys remain in this page only and are never intentionally stored or sent. Memory clearing is best-effort because browsers may retain internal copies; close the page before reconnecting the computer.</p>
-    </section>
-    <section class="card no-print" id="vanity-card" role="tabpanel" hidden>
-      <div class="kicker">Same counter, same address.</div>
-      <h2>Grind a vanity address</h2>
-      <p class="muted vanity-intro">A counter becomes the passphrase: base-62 over a-zA-Z0-9 in odometer order ("aaa\u2026", "aab\u2026"). Each passphrase is hashed with SHA-256 into a private key (the brain-wallet convention) whose legacy P2PKH address is checked against your prefix. One Web Worker per CPU core grinds a disjoint counter range; a contiguous range is a bucket of passphrases sharing leading characters. This does not invent entropy \u2014 it is a calculator over a counter you choose, and every result reproduces from its counter.</p>
-      <p class="muted vanity-intro">Vanity passphrases are brain wallets: anyone grinding the same counter space finds the same keys. Use the longest practical passphrase length, and paste a found passphrase into Key Derivation \u2192 Private key to see every script type and the WIF.</p>
-      <div class="vanity-grid">
-        <label class="field">Address prefix
-          <input id="vanity-prefix" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="1Love\u2026" aria-describedby="vanity-prefix-help">
-          <span class="field-note" id="vanity-prefix-help">Base58, starts with \u201C1\u201D. Each extra character multiplies the work by ~58.</span>
-        </label>
-        <label class="field">Passphrase length
-          <input id="vanity-length" type="number" min="1" max="32" step="1" inputmode="numeric" value="8" aria-describedby="vanity-length-help">
-          <span class="field-note" id="vanity-length-help">Characters a-zA-Z0-9. 62^10 counters fill the 64-bit counter; longer passphrases grind their low range.</span>
-        </label>
-      </div>
-      <div class="vanity-grid">
-        <label class="field">Start counter
-          <input id="vanity-start" inputmode="numeric" autocomplete="off" spellcheck="false" value="0" aria-describedby="vanity-start-help">
-          <span class="field-note" id="vanity-start-help">First counter tried. Counter 0 is passphrase "aaa\u2026".</span>
-        </label>
-        <label class="field">Range size
-          <input id="vanity-count" inputmode="numeric" autocomplete="off" spellcheck="false" value="1000000" aria-describedby="vanity-count-help">
-          <span class="field-note" id="vanity-count-help">Candidates to grind. After a run, Start continues where the range ended.</span>
-        </label>
-        <label class="field">Workers
-          <input id="vanity-workers" type="number" min="1" max="64" step="1" inputmode="numeric" value="1" aria-describedby="vanity-workers-help">
-          <span class="field-note" id="vanity-workers-help">One per CPU core is fastest; defaults to this device's core count.</span>
-        </label>
-      </div>
-      <p class="muted" id="vanity-estimate" aria-live="polite"></p>
-      <div class="row current-item-actions">
-        <button class="btn primary" id="vanity-go" type="button">Start grinding</button>
-        <div class="derive-progress" id="vanity-progress" role="progressbar" aria-label="Vanity grinding progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0% complete" hidden><span class="derive-progress-track"><span class="derive-progress-bar"></span></span><span class="derive-progress-label">0%</span></div>
-        <button class="btn secondary" id="vanity-stop" type="button" disabled>Stop</button>
-        <button class="btn clear-current-action" id="vanity-wipe" type="button" disabled aria-disabled="true">Clear results</button>
-      </div>
-      <p class="muted" id="vanity-status" aria-live="polite">Idle. No range has been ground this session.</p>
-      <p class="err" id="vanity-error" role="alert"></p>
-      <div id="vanity-out" aria-live="polite"></div>
-      <p class="muted">Found passphrases remain in this page only. Memory clearing is best-effort; close the page before reconnecting the computer.</p>
     </section>
     <div id="out"></div>
     <section class="card muted sources">
@@ -2275,6 +2275,7 @@ function hodlInitDerivationControls() {
         if (re.accounts.some((account) => account.def.id === id && account.def.purpose === purpose)) Qs(id);
         else hodlInvalidateLiveKeyResult();
       }
+      hodlVanityScriptChanged();
       let seed = document.getElementById("seed");
       if (seed) seed.dispatchEvent(new Event("input"));
       return;
@@ -8081,6 +8082,8 @@ function hodlRestoreKey() {
     document.getElementById("calc-card").hidden = true;
     hodlQueueMasterFingerprintPreview(0);
     hodlUpdateDerivationPathPreview();
+    hodlVanitySyncScriptNote();
+    hodlVanityEstimate();
     hodlSyncKeyClearButton();
     hodlSyncDeriveButton();
     return;
@@ -8127,6 +8130,9 @@ function hodlRestoreKey() {
   tc();
   hodlQueueMasterFingerprintPreview(0);
   hodlUpdateDerivationPathPreview();
+  hodlVanitySyncScriptNote();
+  hodlVanitySyncSaltNote();
+  hodlVanityEstimate();
   hodlSyncKeyClearButton();
   hodlSyncDeriveButton();
 }
@@ -8587,9 +8593,10 @@ function hodlDeleteActiveMsig() {
 function hodlShowWorkspace(id) {
   if (id === hodlWorkspace) return;
   let preservedTop = window.scrollY, preservedLeft = window.scrollX;
-  if (hodlWorkspace === "calc") hodlCaptureKey();
-  else if (hodlWorkspace === "msig") hodlCaptureMsig();
-  else if (hodlWorkspace === "vanity") hodlVanityStop();
+  if (hodlWorkspace === "calc") {
+    hodlCaptureKey();
+    hodlVanityCancel();
+  } else if (hodlWorkspace === "msig") hodlCaptureMsig();
   hodlWorkspace = id;
   [...W("#workspace").children].forEach((button) => {
     let active = button.dataset.workspace === id;
@@ -8602,7 +8609,6 @@ function hodlShowWorkspace(id) {
   document.getElementById("msig-card").hidden = true;
   document.getElementById("psbt-card").hidden = id !== "psbt";
   document.getElementById("bip85-card").hidden = id !== "bip85";
-  document.getElementById("vanity-card").hidden = id !== "vanity";
   re = null;
   Ge = false;
   dr.innerHTML = "";
@@ -8694,22 +8700,65 @@ function hodlSeedInitialManagers() {
     hodlActiveMsig = 0;
   }
 }
-var hodlVanityGrinder = null, hodlVanityMatches = [], hodlVanityFound = 0, hodlVanityRunning = false, hodlVanityDisplayLimit = 100;
+var hodlVanityGrinder = null, hodlVanityMatches = [], hodlVanityFound = 0, hodlVanityRunning = false, hodlVanityDisplayLimit = 100, hodlVanitySaltMode = "";
+// The active key's entropy inputs, in fixed order. A grind is salted with the
+// passphrase field verbatim when it holds a value (a found passphrase is that
+// passphrase followed by the counter characters); with no passphrase, the
+// salt falls back to the SHA-256 digest of whichever of these currently hold
+// a value, so the vanity grinder always respects the secrets in the session.
+var hodlVanitySaltFields = ["dice", "hex", "bin", "base4", "base8", "base32", "base64", "seed", "seed-numbers", "cards", "direct-cards", "key"];
+function hodlVanityScriptId() {
+  return hodlScriptDefinition(hodlSelectedScriptType()).script;
+}
+function hodlVanityScript() {
+  return VANITY_SCRIPTS[hodlVanityScriptId()] ?? VANITY_SCRIPTS.p2pkh;
+}
 function hodlVanityFormatCount(value) {
   return BigInt(value).toLocaleString("en-US");
 }
+function hodlFilterVanityPrefix(value, meta = hodlVanityScript()) {
+  let text = String(value ?? "");
+  if (meta.bech32) {
+    let allowed = new Set((meta.prefix + "bc1qpzry9x8gf2tvdw0s3jn54khce6mua7l").split(""));
+    return [...text.toLowerCase()].filter((character) => !/\s/.test(character) && allowed.has(character)).join("");
+  }
+  return [...text].filter((character) => !/\s/.test(character) && "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".includes(character)).join("");
+}
+function hodlVanitySyncScriptNote() {
+  let meta = hodlVanityScript(), help = document.getElementById("vanity-prefix-help"), input = document.getElementById("vanity-prefix"), intro = document.getElementById("vanity-intro");
+  if (help) help.textContent = meta.bech32 ? `${meta.label} prefix, starts with “${meta.prefix}”. Live-filtered to lowercase bech32 characters; each free character multiplies the work by ~32.` : `${meta.label} prefix, starts with “${meta.prefix}”. Live-filtered to base58 characters; each free character multiplies the work by ~58.`;
+  if (input) input.placeholder = `${meta.prefix}…`;
+  if (intro) intro.textContent = `A counter becomes the passphrase: base-62 over a-zA-Z0-9 in odometer order ("aaa…", "aab…"). Each passphrase is hashed with SHA-256 into a private key (the brain-wallet convention) whose ${meta.label} address is checked against your prefix. This does not invent entropy — it is a calculator over a counter you choose, and every result reproduces from its counter. If this key has a passphrase entered above, it prefixes every candidate verbatim — a found passphrase is that passphrase followed by the counter characters. Otherwise, any entropy entered above prefixes candidates as a SHA-256 digest, so the same counters only reproduce while those inputs stay unchanged.`;
+}
+// Live note of what currently salts the grind: the passphrase above verbatim,
+// a digest of the entropy inputs as a fallback, or nothing (public mapping).
+function hodlVanitySyncSaltNote() {
+  let note = document.getElementById("vanity-salt-note");
+  if (!note) return;
+  let pass = document.getElementById("pass")?.value ?? "";
+  if (pass.length) {
+    note.textContent = "Salting with the passphrase above, verbatim — every found passphrase is that passphrase followed by the counter characters.";
+    return;
+  }
+  let salted = hodlVanitySaltFields.some((id) => (document.getElementById(id)?.value ?? "").length > 0);
+  note.textContent = salted
+    ? "Salting with a SHA-256 digest of the entropy inputs above — enter a passphrase to prefix candidates with it verbatim instead."
+    : "No passphrase or entropy above — candidates use the public counter mapping, and anyone grinding the same space finds the same keys.";
+}
 function hodlVanityEstimate() {
-  let estimateEl = document.getElementById("vanity-estimate");
-  if (!estimateEl) return;
+  let estimateEl = document.getElementById("vanity-estimate"), input = document.getElementById("vanity-prefix");
+  if (!estimateEl || !input) return;
+  let script = hodlVanityScriptId();
   try {
-    let prefix = validateVanityPrefix(document.getElementById("vanity-prefix").value);
-    estimateEl.textContent = `Prefix \u201C${prefix}\u201D matches about 1 in ${hodlVanityFormatCount(estimateVanityWork(prefix))} candidates on average.`;
+    let prefix = validateVanityPrefix(input.value, script);
+    estimateEl.textContent = `Prefix “${prefix}” matches about 1 in ${hodlVanityFormatCount(estimateVanityWork(prefix, script))} ${hodlVanityScript().label} candidates on average.`;
   } catch {
     estimateEl.textContent = "";
   }
 }
 function hodlVanityParseInputs() {
-  let prefix = validateVanityPrefix(document.getElementById("vanity-prefix").value);
+  let script = hodlVanityScriptId();
+  let prefix = validateVanityPrefix(document.getElementById("vanity-prefix").value, script);
   let passLen = Number(document.getElementById("vanity-length").value);
   let parseCounter = (id, label) => {
     let raw = document.getElementById(id).value.trim();
@@ -8719,7 +8768,9 @@ function hodlVanityParseInputs() {
   let start = parseCounter("vanity-start", "The start counter");
   let count = parseCounter("vanity-count", "The range size");
   let workers = Math.max(1, Math.min(64, Number(document.getElementById("vanity-workers").value) || 1));
-  return { prefix, ...validateVanityRange(passLen, start, count), workers };
+  let pass = document.getElementById("pass")?.value ?? "";
+  let salt = validateVanitySalt(vanitySessionSalt(pass, hodlVanitySaltFields.map((id) => document.getElementById(id)?.value ?? "")));
+  return { prefix, ...validateVanityRange(passLen, start, count), workers, script, salt, saltMode: pass.length ? "passphrase" : salt.length ? "digest" : "" };
 }
 function hodlRenderVanityOut() {
   let box = document.getElementById("vanity-out");
@@ -8730,9 +8781,10 @@ function hodlRenderVanityOut() {
   }
   let rows = hodlVanityMatches.map((match, index) => `<tr aria-rowindex="${index + 2}"><th scope="row">${index + 1}</th><td class="mono">${$t(match.counter.toString())}</td><td class="mono">${$t(match.passphrase)}</td><td class="mono">${$t(match.address)}</td></tr>`).join("");
   let overflow = hodlVanityFound > hodlVanityMatches.length ? `<p class="muted">Only the first ${hodlVanityMatches.length} matches are listed; ${hodlVanityFormatCount(hodlVanityFound)} found in total.</p>` : "";
+  let saltNote = hodlVanitySaltMode === "passphrase" ? " Passphrases are this key's passphrase followed by the counter characters; the same counters reproduce these addresses only while that passphrase stays unchanged." : hodlVanitySaltMode === "digest" ? " Passphrases begin with a SHA-256 digest of this key's entropy inputs; the same counters reproduce these addresses only while those inputs stay unchanged." : "";
   box.innerHTML = `<section class="wallet-data-section" aria-labelledby="vanity-matches-heading">
       <div class="wallet-data-section-head"><h3 id="vanity-matches-heading">Matching addresses</h3>
-      <p class="muted">Each passphrase reproduces its address (SHA-256 \u2192 legacy P2PKH). Anyone who finds the same passphrase takes the coins.</p></div>
+      <p class="muted">Each passphrase reproduces its address (SHA-256 \u2192 ${$t(hodlVanityScript().label)}). Anyone who finds the same passphrase takes the coins.${$t(saltNote)}</p></div>
       <div class="wallet-address-table"><div class="wallet-table wallet-table-public" role="region" tabindex="0" aria-label="Matching vanity addresses table"><table aria-rowcount="${hodlVanityMatches.length + 1}"><caption class="sr-only">Matching vanity addresses</caption><thead><tr aria-rowindex="1"><th scope="col">#</th><th scope="col">Counter</th><th scope="col">Passphrase</th><th scope="col">Address</th></tr></thead><tbody>${rows}</tbody></table></div></div>
       ${overflow}</section>`;
 }
@@ -8758,6 +8810,27 @@ function hodlVanitySetStatus(text) {
 function hodlVanityStop() {
   if (hodlVanityGrinder && hodlVanityRunning) hodlVanityGrinder.stop();
 }
+function hodlVanityCancel() {
+  if (hodlVanityGrinder) hodlVanityGrinder.cancel();
+  hodlVanityRunning = false;
+  hodlVanitySyncControls();
+}
+function hodlVanityClearResults(status = "Results cleared (best effort).") {
+  hodlVanityMatches = [];
+  hodlVanityFound = 0;
+  hodlVanitySaltMode = "";
+  hodlRenderVanityOut();
+  hodlVanitySetStatus(status);
+  hodlVanitySyncControls();
+}
+function hodlVanityScriptChanged() {
+  hodlVanityCancel();
+  let input = document.getElementById("vanity-prefix");
+  if (input) hodlApplyFilteredInput(input, (value) => hodlFilterVanityPrefix(value));
+  hodlVanityClearResults("Idle. No range has been ground this session.");
+  hodlVanitySyncScriptNote();
+  hodlVanityEstimate();
+}
 function hodlRunVanity() {
   let error = document.getElementById("vanity-error");
   if (error) error.textContent = "";
@@ -8770,10 +8843,11 @@ function hodlRunVanity() {
   }
   hodlVanityMatches = [];
   hodlVanityFound = 0;
+  hodlVanitySaltMode = inputs.saltMode;
   hodlRenderVanityOut();
   hodlVanityRunning = true;
   hodlVanitySyncControls();
-  hodlVanitySetStatus("Starting workers\u2026");
+  hodlVanitySetStatus(hodlVanitySaltMode === "passphrase" ? "Starting workers — candidates are prefixed with this key's passphrase\u2026" : hodlVanitySaltMode === "digest" ? "Starting workers — candidates are salted with a digest of this key's entropy inputs\u2026" : "Starting workers\u2026");
   let progressBar = document.getElementById("vanity-progress");
   hodlVanityGrinder = new VanityGrinder({
     onProgress: ({ done, total, rate }) => {
@@ -8817,21 +8891,33 @@ function hodlInitVanity() {
   if (workersField && navigator.hardwareConcurrency) workersField.value = String(Math.max(1, Math.min(64, navigator.hardwareConcurrency)));
   go.onclick = hodlRunVanity;
   document.getElementById("vanity-stop").onclick = hodlVanityStop;
-  document.getElementById("vanity-wipe").onclick = () => {
-    hodlVanityMatches = [];
-    hodlVanityFound = 0;
-    hodlRenderVanityOut();
-    hodlVanitySetStatus("Results cleared (best effort).");
-    hodlVanitySyncControls();
-  };
-  document.getElementById("vanity-prefix").addEventListener("input", hodlVanityEstimate);
+  document.getElementById("vanity-wipe").onclick = () => hodlVanityClearResults();
+  let prefix = document.getElementById("vanity-prefix");
+  prefix.addEventListener("input", () => {
+    hodlApplyFilteredInput(prefix, (value) => hodlFilterVanityPrefix(value));
+    hodlVanityEstimate();
+  });
+  for (let id of ["vanity-length", "vanity-start", "vanity-count", "vanity-workers"]) {
+    let input = document.getElementById(id);
+    input?.addEventListener("input", () => hodlApplyFilteredInput(input, (value) => String(value ?? "").replace(/\D/g, "")));
+  }
+  // The salt note follows the passphrase and entropy fields live; the fields
+  // are re-rendered on mode switches, so listen on the card (delegated).
+  let panel = document.getElementById("calc-card");
+  panel?.addEventListener("input", (event) => {
+    let id = event.target?.id;
+    if (id === "pass" || hodlVanitySaltFields.includes(id)) hodlVanitySyncSaltNote();
+  });
+  document.getElementById("vanity-card")?.addEventListener("toggle", hodlVanitySyncSaltNote);
+  hodlVanitySyncScriptNote();
+  hodlVanitySyncSaltNote();
   hodlVanityEstimate();
   hodlVanitySyncControls();
 }
 function hodlInitWorkspace() {
   let box = W("#workspace");
   box.innerHTML = "";
-  [["calc", "Key Derivation"], ["bip85", "BIP-85"], ["msig", "Multi Signature"], ["psbt", "PSBT / Nonce"], ["vanity", "Vanity"]].forEach(([id, label]) => {
+  [["calc", "Key Derivation"], ["bip85", "BIP-85"], ["msig", "Multi Signature"], ["psbt", "PSBT / Nonce"]].forEach(([id, label]) => {
     let button = document.createElement("button"), active = hodlWorkspace === id;
     button.type = "button";
     button.className = "tab" + (active ? " active" : "");

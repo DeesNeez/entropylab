@@ -44,7 +44,7 @@
         <li>Keep your private keys offline.</li>
       </ul>
     </section>
-    <div class="row no-print segmented-control" id="workspace"><button class="tab active" aria-pressed="true">Key Derivation</button><button class="tab" aria-pressed="false">BIP-85</button><button class="tab" aria-pressed="false">Multi Signature</button><button class="tab" aria-pressed="false">PSBT / Nonce</button><button class="tab" aria-pressed="false">Vanity</button></div>
+    <div class="row no-print segmented-control" id="workspace"><button class="tab active" aria-pressed="true">Key Derivation</button><button class="tab" aria-pressed="false">BIP-85</button><button class="tab" aria-pressed="false">Multi Signature</button><button class="tab" aria-pressed="false">PSBT / Nonce</button></div>
     <section class="key-manager no-print" id="key-manager">
       <div class="key-manager-head"><h2>Keys</h2></div>
       <div class="key-tab-strip"><div class="key-tabs" id="key-tabs" role="tablist" aria-label="Keys"></div><div class="add-item-control"><button class="add-key" id="add-key" type="button" aria-label="Add key" aria-describedby="add-key-tooltip">+</button><span class="add-item-tooltip" id="add-key-tooltip" role="tooltip">Add another key</span></div></div>
@@ -167,6 +167,47 @@ words, pick one of the checksum words.</span></span>
         <button class="btn clear-current-action" id="wipe" type="button" disabled aria-disabled="true">Clear Current Key</button>
       </div>
       <p class="err" id="error"></p>
+      <details class="vanity-inline no-print" id="vanity-card">
+        <summary class="vanity-summary"><span><span class="kicker">Same counter, same address.</span><span class="vanity-summary-title" id="vanity-heading">Grind a vanity address</span></span><span class="muted vanity-summary-note">Optional · uses the selected script type</span><span class="vanity-chevron" aria-hidden="true">▼</span></summary>
+        <p class="muted vanity-intro" id="vanity-intro">A counter becomes the passphrase: base-62 over a-zA-Z0-9 in odometer order ("aaa…", "aab…"). Each passphrase is hashed with SHA-256 into a private key (the brain-wallet convention) whose selected address is checked against your prefix. This does not invent entropy — it is a calculator over a counter you choose, and every result reproduces from its counter. If this key has a passphrase entered above, it prefixes every candidate verbatim — a found passphrase is that passphrase followed by the counter characters. Otherwise, any entropy entered above prefixes candidates as a SHA-256 digest, so the same counters only reproduce while those inputs stay unchanged.</p>
+        <p class="muted vanity-intro">Vanity passphrases are brain wallets — with no passphrase or entropy above, anyone grinding the same counter space finds the same keys. Enter a passphrase above first so every candidate starts with it verbatim. Use the longest practical passphrase length, and paste a found passphrase into Key Derivation → Private key to see every script type and the WIF.</p>
+        <p class="muted" id="vanity-salt-note">No passphrase or entropy above — candidates use the public counter mapping, and anyone grinding the same space finds the same keys.</p>
+        <div class="vanity-grid">
+          <label class="field">Address prefix
+            <input id="vanity-prefix" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="bc1q…" aria-describedby="vanity-prefix-help">
+            <span class="field-note" id="vanity-prefix-help">Native SegWit P2WPKH prefix, starts with “bc1q”. Live-filtered to lowercase bech32 characters; each free character multiplies the work by ~32.</span>
+          </label>
+          <label class="field">Passphrase length
+            <input id="vanity-length" type="number" min="1" max="32" step="1" inputmode="numeric" value="8" aria-describedby="vanity-length-help">
+            <span class="field-note" id="vanity-length-help">Characters a-zA-Z0-9. 62^10 counters fill the 64-bit counter; longer passphrases grind their low range.</span>
+          </label>
+        </div>
+        <div class="vanity-grid">
+          <label class="field">Start counter
+            <input id="vanity-start" inputmode="numeric" autocomplete="off" spellcheck="false" value="0" aria-describedby="vanity-start-help">
+            <span class="field-note" id="vanity-start-help">First counter tried. Counter 0 is passphrase "aaa…".</span>
+          </label>
+          <label class="field">Range size
+            <input id="vanity-count" inputmode="numeric" autocomplete="off" spellcheck="false" value="1000000" aria-describedby="vanity-count-help">
+            <span class="field-note" id="vanity-count-help">Candidates to grind. After a run, Start continues where the range ended.</span>
+          </label>
+          <label class="field">Workers
+            <input id="vanity-workers" type="number" min="1" max="64" step="1" inputmode="numeric" value="1" aria-describedby="vanity-workers-help">
+            <span class="field-note" id="vanity-workers-help">One per CPU core is fastest; defaults to this device's core count.</span>
+          </label>
+        </div>
+        <p class="muted" id="vanity-estimate" aria-live="polite"></p>
+        <div class="row current-item-actions">
+          <button class="btn primary" id="vanity-go" type="button">Start grinding</button>
+          <div class="derive-progress" id="vanity-progress" role="progressbar" aria-label="Vanity grinding progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0% complete" hidden><span class="derive-progress-track"><span class="derive-progress-bar"></span></span><span class="derive-progress-label">0%</span></div>
+          <button class="btn secondary" id="vanity-stop" type="button" disabled>Stop</button>
+          <button class="btn clear-current-action" id="vanity-wipe" type="button" disabled aria-disabled="true">Clear results</button>
+        </div>
+        <p class="muted" id="vanity-status" aria-live="polite">Idle. No range has been ground this session.</p>
+        <p class="err" id="vanity-error" role="alert"></p>
+        <div id="vanity-out" aria-live="polite"></div>
+        <p class="muted">Found passphrases remain in this page only. Memory clearing is best-effort; close the page before reconnecting the computer.</p>
+      </details>
     </section>
     <section class="card no-print" id="bip85-card" role="tabpanel" hidden>
       <div class="kicker">One seed. Many children.</div>
@@ -340,47 +381,6 @@ words, pick one of the checksum words.</span></span>
       <p class="err" id="psbt-error" role="alert"></p>
       <div id="psbt-out" aria-live="polite"></div>
       <p class="muted">Session keys remain in this page only and are never intentionally stored or sent. Memory clearing is best-effort because browsers may retain internal copies; close the page before reconnecting the computer.</p>
-    </section>
-    <section class="card no-print" id="vanity-card" role="tabpanel" hidden>
-      <div class="kicker">Same counter, same address.</div>
-      <h2>Grind a vanity address</h2>
-      <p class="muted vanity-intro">A counter becomes the passphrase: base-62 over a-zA-Z0-9 in odometer order ("aaa…", "aab…"). Each passphrase is hashed with SHA-256 into a private key (the brain-wallet convention) whose legacy P2PKH address is checked against your prefix. One Web Worker per CPU core grinds a disjoint counter range; a contiguous range is a bucket of passphrases sharing leading characters. This does not invent entropy — it is a calculator over a counter you choose, and every result reproduces from its counter.</p>
-      <p class="muted vanity-intro">Vanity passphrases are brain wallets: anyone grinding the same counter space finds the same keys. Use the longest practical passphrase length, and paste a found passphrase into Key Derivation → Private key to see every script type and the WIF.</p>
-      <div class="vanity-grid">
-        <label class="field">Address prefix
-          <input id="vanity-prefix" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="1Love…" aria-describedby="vanity-prefix-help">
-          <span class="field-note" id="vanity-prefix-help">Base58, starts with “1”. Each extra character multiplies the work by ~58.</span>
-        </label>
-        <label class="field">Passphrase length
-          <input id="vanity-length" type="number" min="1" max="32" step="1" inputmode="numeric" value="8" aria-describedby="vanity-length-help">
-          <span class="field-note" id="vanity-length-help">Characters a-zA-Z0-9. 62^10 counters fill the 64-bit counter; longer passphrases grind their low range.</span>
-        </label>
-      </div>
-      <div class="vanity-grid">
-        <label class="field">Start counter
-          <input id="vanity-start" inputmode="numeric" autocomplete="off" spellcheck="false" value="0" aria-describedby="vanity-start-help">
-          <span class="field-note" id="vanity-start-help">First counter tried. Counter 0 is passphrase "aaa…".</span>
-        </label>
-        <label class="field">Range size
-          <input id="vanity-count" inputmode="numeric" autocomplete="off" spellcheck="false" value="1000000" aria-describedby="vanity-count-help">
-          <span class="field-note" id="vanity-count-help">Candidates to grind. After a run, Start continues where the range ended.</span>
-        </label>
-        <label class="field">Workers
-          <input id="vanity-workers" type="number" min="1" max="64" step="1" inputmode="numeric" value="1" aria-describedby="vanity-workers-help">
-          <span class="field-note" id="vanity-workers-help">One per CPU core is fastest; defaults to this device's core count.</span>
-        </label>
-      </div>
-      <p class="muted" id="vanity-estimate" aria-live="polite"></p>
-      <div class="row current-item-actions">
-        <button class="btn primary" id="vanity-go" type="button">Start grinding</button>
-        <div class="derive-progress" id="vanity-progress" role="progressbar" aria-label="Vanity grinding progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0% complete" hidden><span class="derive-progress-track"><span class="derive-progress-bar"></span></span><span class="derive-progress-label">0%</span></div>
-        <button class="btn secondary" id="vanity-stop" type="button" disabled>Stop</button>
-        <button class="btn clear-current-action" id="vanity-wipe" type="button" disabled aria-disabled="true">Clear results</button>
-      </div>
-      <p class="muted" id="vanity-status" aria-live="polite">Idle. No range has been ground this session.</p>
-      <p class="err" id="vanity-error" role="alert"></p>
-      <div id="vanity-out" aria-live="polite"></div>
-      <p class="muted">Found passphrases remain in this page only. Memory clearing is best-effort; close the page before reconnecting the computer.</p>
     </section>
     <div id="out"></div>
     <section class="card muted sources">

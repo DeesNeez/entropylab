@@ -48,16 +48,25 @@ Official website: [entropylab.online](https://entropylab.online)
   reproduce the same child — this is a calculator, not a generator. Children
   follow the published BIP-85 vectors and match COLDCARD, including derivation
   from a passphrase-extended root when a BIP-39 passphrase is in effect.
-- Grinds vanity legacy (P2PKH) addresses deterministically: a counter becomes
-  a passphrase — base-62 over `a-zA-Z0-9` in odometer order — each passphrase
-  is hashed with SHA-256 into a private key (the brain-wallet convention), and
-  the address is checked against a chosen prefix. One Web Worker per CPU core
-  grinds a disjoint counter range (each range is a bucket of passphrases
-  sharing leading characters), with the hashing and curve math running in a
-  dedicated WebAssembly module. Same counter always reproduces the same
-  address, so results are verifiable; nothing random is invented. Vanity
-  passphrases are brain wallets — anyone grinding the same counter space finds
-  the same keys.
+- Grinds vanity addresses deterministically for the address type selected in
+  Key Derivation (legacy P2PKH, nested SegWit, native SegWit, or Taproot) from
+  a disclosure collapsed by default on that page: a
+  counter becomes a passphrase — base-62 over `a-zA-Z0-9` in odometer order —
+  each passphrase is hashed with SHA-256 into a private key (the brain-wallet
+  convention), and the selected address type is checked against a chosen
+  prefix. One Web Worker per CPU core grinds a disjoint counter range (each
+  range is a bucket of passphrases sharing leading characters), with the
+  hashing and curve math running in a dedicated WebAssembly module. Same
+  counter always reproduces the same address, so results are verifiable;
+  nothing random is invented. Whenever the key's passphrase field holds a
+  value, it prefixes every candidate verbatim: a found passphrase is the
+  session's passphrase followed by the counter characters, so it reproduces
+  from the passphrase alone. With no passphrase but entropy fields holding
+  values, candidates are instead prefixed with a SHA-256 digest of those
+  inputs (only the digest reaches the workers and the results), so the same
+  counters only reproduce while those inputs stay unchanged. Vanity
+  passphrases are brain wallets — without that session salt, anyone grinding
+  the same counter space finds the same keys.
 - Runs a quick barrage of startup sanity checks on the host browser (secure
   context, CSPRNG, BigInt, UTF-8 encoding, and NFKD normalization). If any
   check fails, the page is replaced with a failure report listing the failed

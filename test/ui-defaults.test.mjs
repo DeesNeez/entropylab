@@ -25,6 +25,8 @@ const appWhitespace = transformSync(appSource, {
 }).code;
 const css = read("src/css/styles.css");
 const online = read("src/js/online.js");
+const vanitySource = read("src/js/vanity.js");
+const workerSource = read("src/js/vanity-worker.js");
 
 test("top status banner omits the entropy RNG message", () => {
   assert.doesNotMatch(`${template}\n${app}`, /No entropy RNG/);
@@ -1100,26 +1102,60 @@ test("workspace tabs place BIP-85 between Key Derivation and Multi Signature", (
   assert.match(css, /#bip85-card\[hidden\]/);
 });
 
-test("workspace tabs place Vanity last, after PSBT / Nonce", () => {
-  assert.match(appSource, /\["psbt", "PSBT \/ Nonce"\], \["vanity", "Vanity"\]/);
-  assert.match(template, />PSBT \/ Nonce<\/button><button class="tab" aria-pressed="false">Vanity<\/button>/);
+test("vanity grinding lives inside Key Derivation and follows its script type", () => {
+  assert.doesNotMatch(appSource, /\["vanity", "Vanity"\]/);
+  assert.doesNotMatch(template, />Vanity<\/button>/);
+  assert.match(template, /id="error"[\s\S]*?id="vanity-card"[\s\S]*?id="bip85-card"/);
+  assert.match(appSource, /id="error"[\s\S]*?id="vanity-card"[\s\S]*?id="bip85-card"/);
   for (const markup of [template, appSource]) {
-    for (const id of ["vanity-card", "vanity-prefix", "vanity-length", "vanity-start", "vanity-count", "vanity-workers", "vanity-estimate", "vanity-go", "vanity-progress", "vanity-stop", "vanity-wipe", "vanity-status", "vanity-error", "vanity-out"]) {
+    assert.match(markup, /<details class="vanity-inline no-print" id="vanity-card">/, "vanity generator is a details disclosure");
+    assert.doesNotMatch(markup, /<details class="vanity-inline no-print" id="vanity-card"[^>]*\bopen\b/, "vanity generator is collapsed by default");
+    assert.match(markup, /<summary class="vanity-summary">/);
+    assert.match(markup, /<span class="vanity-chevron" aria-hidden="true">/, "the collapsed disclosure shows an expand arrow");
+    for (const id of ["vanity-card", "vanity-prefix", "vanity-length", "vanity-start", "vanity-count", "vanity-workers", "vanity-estimate", "vanity-salt-note", "vanity-go", "vanity-progress", "vanity-stop", "vanity-wipe", "vanity-status", "vanity-error", "vanity-out"]) {
       assert.match(markup, new RegExp(`id="${id}"`), `${id} is present`);
     }
     assert.match(markup, /a-zA-Z0-9/, "the passphrase alphabet is documented");
     assert.match(markup, /does not invent entropy/);
   }
-  assert.match(css, /#vanity-card\[hidden\]/);
-  assert.match(appSource, /getElementById\("vanity-card"\)\.hidden = id !== "vanity"/);
+  assert.match(css, /\.vanity-inline \{[^}]*border-top: 1px solid var\(--border\)/);
+  assert.match(css, /\.vanity-summary::-webkit-details-marker \{ display: none; \}/);
+  assert.match(css, /\.vanity-chevron \{[^}]*color: var\(--accent\)/);
+  assert.match(css, /\.vanity-inline\[open\] \.vanity-chevron \{ transform: rotate\(180deg\); \}/);
+  assert.match(css, /\.vanity-inline\[open\] \.vanity-summary \{ margin-bottom: 12px; \}/);
+  assert.match(appSource, /function hodlVanityScriptId\(\) \{\s*return hodlScriptDefinition\(hodlSelectedScriptType\(\)\)\.script;/);
+  assert.match(appSource, /target\.id === "script-type"[\s\S]*?hodlVanityScriptChanged\(\)/);
   // The grinder only runs inside blob:-URL workers; the CSP allows exactly
   // that and nothing else.
   assert.match(template, /worker-src blob:;/);
 });
 
-test("vanity grinding stops when leaving the Vanity tab", () => {
-  assert.match(appSource, /else if \(hodlWorkspace === "vanity"\) hodlVanityStop\(\)/);
+test("the vanity grinder salts candidates with the session's passphrase verbatim", () => {
+  // Both copies of the intro document the salting.
+  for (const markup of [template, appSource]) {
+    assert.match(markup, /If this key has a passphrase entered above, it prefixes every candidate verbatim/);
+  }
+  // The salt is the key's passphrase field verbatim, so a found passphrase is
+  // the passphrase followed by the counter characters. With no passphrase,
+  // the SHA-256 digest of the key's non-empty entropy fields (in a fixed
+  // order) prefixes candidates instead — never anything invented.
+  assert.match(appSource, /hodlVanitySaltFields = \["dice", "hex", "bin", "base4", "base8", "base32", "base64", "seed", "seed-numbers", "cards", "direct-cards", "key"\]/);
+  assert.match(appSource, /vanitySessionSalt\(pass, hodlVanitySaltFields\.map\(\(id\) => document\.getElementById\(id\)\?\.value \?\? ""\)\)/);
+  assert.match(vanitySource, /export function vanitySessionSalt\(passphrase, values = \[\]\) \{\s*const pass = String\(passphrase \?\? ""\);\s*if \(pass\.length\) return pass;\s*const list = \[\.\.\.values\]\.map\(\(value\) => String\(value \?\? ""\)\)\.filter\(\(value\) => value\.length > 0\);\s*if \(!list\.length\) return "";\s*return bytesToHex\(sha256\(new TextEncoder\(\)\.encode\(JSON\.stringify\(list\)\)\)\);/);
+  // The salt flows into every worker, and the reported passphrase is the full
+  // salted brain-wallet passphrase.
+  assert.match(vanitySource, /worker\.postMessage\(\{ type: "grind", prefix, passLen, start: bucket\.start, count: bucket\.count, script: scriptCode, salt: saltText \}\)/);
+  assert.match(vanitySource, /passphrase: saltText \+ match\.passphrase/);
+  assert.match(workerSource, /saltBytes\.length > MAX_SALT/);
+  assert.match(workerSource, /vanity_grind\(prefixPtr, prefixBytes\.length, msg\.passLen, cursor, BigInt\(chunk\), outPtr, OUT_CAP, msg\.script \|\| 0, saltPtr, saltBytes\.length\)/);
+});
+
+test("vanity prefix input is filtered live for the selected address type", () => {
+  assert.match(appSource, /prefix\.addEventListener\("input", \(\) => \{\s*hodlApplyFilteredInput\(prefix, \(value\) => hodlFilterVanityPrefix\(value\)\);\s*hodlVanityEstimate\(\);/);
+  assert.match(appSource, /if \(meta\.bech32\) \{\s*let allowed = new Set\(\(meta\.prefix \+ "bc1qpzry9x8gf2tvdw0s3jn54khce6mua7l"\)\.split\(""\)\);/);
+  assert.match(appSource, /return \[\.\.\.text\]\.filter\(\(character\) => !\/\\s\/\.test\(character\) && "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"\.includes\(character\)\)\.join\(""\);/);
   assert.match(appSource, /document\.getElementById\("vanity-stop"\)\.onclick = hodlVanityStop/);
+  assert.match(appSource, /hodlWorkspace === "calc"\) \{\s*hodlCaptureKey\(\);\s*hodlVanityCancel\(\);/);
 });
 
 test("BIP-85 entry point sits beside Derive Wallet and opens the BIP-85 tab", () => {

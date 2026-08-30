@@ -19,16 +19,22 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { secp256k1 as noble } from "@noble/curves/secp256k1.js";
 import { createBase58check } from "@scure/base";
+import { NETWORK, p2pkh, p2sh, p2tr, p2wpkh } from "@scure/btc-signer";
 import { VANITY_WASM_B64 } from "../src/js/vanity-wasm-b64.js";
 import { VANITY_WORKER_SOURCE } from "../src/js/vanity-worker.js";
 import {
   VANITY_ALPHABET,
+  VANITY_MAX_SALT_LEN,
+  VANITY_SCRIPTS,
   VanityGrinder,
   estimateVanityWork,
   validateVanityPrefix,
   validateVanityRange,
+  validateVanitySalt,
   vanityAddressFromHash160,
+  vanityAddressFromRecord,
   vanityBuckets,
+  vanitySessionSalt,
 } from "../src/js/vanity.js";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -36,13 +42,17 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const sha256 = (data) => new Uint8Array(createHash("sha256").update(data).digest());
 const base58check = createBase58check(sha256);
 
-// Independent derivation of the expected P2PKH address for a passphrase,
-// using noble for the curve operation and Node crypto for the hashes.
-const expectedAddress = (passphrase) => {
+// Independent derivation of the expected address for a passphrase, using
+// noble for the curve operation, Node crypto for the hashes, and
+// @scure/btc-signer for the script/address encoders.
+const expectedAddress = (passphrase, script = "p2pkh") => {
   const seckey = createHash("sha256").update(passphrase, "utf8").digest();
   const pubkey = noble.getPublicKey(new Uint8Array(seckey), true);
-  const hash160 = createHash("ripemd160").update(createHash("sha256").update(pubkey).digest()).digest();
-  return { address: base58check.encode(new Uint8Array([0, ...new Uint8Array(hash160)])), hash160: new Uint8Array(hash160) };
+  const hash160 = new Uint8Array(createHash("ripemd160").update(createHash("sha256").update(pubkey).digest()).digest());
+  if (script === "p2sh-p2wpkh") return { address: p2sh(p2wpkh(pubkey, NETWORK), NETWORK).address, hash160 };
+  if (script === "p2wpkh") return { address: p2wpkh(pubkey, NETWORK).address, hash160 };
+  if (script === "p2tr") return { address: p2tr(pubkey.slice(1), undefined, NETWORK).address };
+  return { address: p2pkh(pubkey, NETWORK).address, hash160 };
 };
 
 // ── Direct WASM bindings ────────────────────────────────────────────────────
@@ -57,29 +67,38 @@ const wasm = new WebAssembly.Instance(new WebAssembly.Module(wasmBytes), {}).exp
 const heap = () => new Uint8Array(wasm.memory.buffer);
 
 // Runs one vanity_grind call and decodes the out buffer into records.
-const grind = (prefix, passLen, start, count, recordCap = 1 << 16) => {
+const grind = (prefix, passLen, start, count, recordCap = 1 << 16, script = "p2pkh", salt = "") => {
   const prefixBytes = new TextEncoder().encode(prefix);
   const prefixPtr = wasm.vanity_alloc(prefixBytes.length);
   heap().set(prefixBytes, prefixPtr);
-  const outCap = 12 + 60 * recordCap;
+  const saltBytes = new TextEncoder().encode(salt);
+  const saltPtr = saltBytes.length ? wasm.vanity_alloc(saltBytes.length) : 0;
+  if (saltBytes.length) heap().set(saltBytes, saltPtr);
+  const outCap = 12 + 72 * recordCap;
   const outPtr = wasm.vanity_alloc(outCap);
   try {
-    const status = wasm.vanity_grind(prefixPtr, prefixBytes.length, passLen, BigInt(start), BigInt(count), outPtr, outCap);
+    const status = wasm.vanity_grind(prefixPtr, prefixBytes.length, passLen, BigInt(start), BigInt(count), outPtr, outCap, VANITY_SCRIPTS[script].code, saltPtr, saltBytes.length);
+    // On invalid arguments (-1) the WASM writes nothing to the out buffer, so
+    // there is no header to decode.
+    if (status === -1) return { status, processed: 0n, matches: 0, records: [] };
     const header = new DataView(wasm.memory.buffer, outPtr, 12);
     const processed = header.getBigUint64(0, true);
     const matches = header.getUint32(8, true);
     const records = [];
     for (let i = 0; i < matches; i++) {
-      const at = outPtr + 12 + i * 60;
+      const at = outPtr + 12 + i * 72;
+      const payload = heap().slice(at + 40, at + 72);
       records.push({
         counter: new DataView(wasm.memory.buffer, at, 8).getBigUint64(0, true),
         passphrase: new TextDecoder().decode(heap().slice(at + 8, at + 8 + passLen)),
-        hash160: heap().slice(at + 40, at + 60),
+        payload,
+        hash160: payload.slice(0, 20),
       });
     }
     return { status, processed, matches, records };
   } finally {
     wasm.vanity_free(prefixPtr, prefixBytes.length);
+    if (saltBytes.length) wasm.vanity_free(saltPtr, saltBytes.length);
     wasm.vanity_free(outPtr, outCap);
   }
 };
@@ -186,6 +205,68 @@ test("vanity_grind rejects invalid arguments", () => {
   assert.equal(tight.status, -2);
   assert.equal(tight.matches, 10);
   assert.equal(tight.processed, 10n);
+  // The session salt is a verbatim passphrase: 256 bytes at most.
+  assert.equal(grind("1", 1, 0n, 1n, 1, "p2pkh", "x".repeat(257)).status, -1, "salt beyond 256 characters");
+  assert.equal(grind("1", 1, 0n, 1n, 1, "p2pkh", "x".repeat(256)).status, 0, "256-character salt accepted");
+});
+
+test("a session salt prefixes every candidate before hashing", () => {
+  // The salt the app computes from the session: the passphrase verbatim.
+  const salt = vanitySessionSalt("correct horse battery staple", ["415263"]);
+  assert.equal(salt, "correct horse battery staple");
+  const salted = expectedAddress(salt + "a");
+  const run = grind(salted.address.slice(0, 2), 1, 0n, 62n, 1 << 8, "p2pkh", salt);
+  assert.equal(run.status, 0);
+  const record = run.records.find((candidate) => candidate.counter === 0n);
+  assert.ok(record, "counter 0 is present");
+  // The record still carries the bare counter string; the salt is the
+  // caller's prefix on top of it (the full brain-wallet passphrase is
+  // salt + passphrase).
+  assert.equal(record.passphrase, "a");
+  assert.equal(vanityAddressFromRecord(record), salted.address);
+  assert.notEqual(vanityAddressFromRecord(record), expectedAddress("a").address, "the salt re-keys every candidate");
+  // Every other record agrees with the independent salted derivation.
+  for (const candidate of run.records) {
+    assert.equal(vanityAddressFromRecord(candidate), expectedAddress(salt + candidate.passphrase).address);
+  }
+  // A different session (different passphrase) re-keys the same counters.
+  const other = grind("1", 1, 0n, 62n, 1 << 8, "p2pkh", vanitySessionSalt("other", []));
+  assert.equal(other.status, 0);
+  const otherZero = other.records.find((candidate) => candidate.counter === 0n);
+  assert.notEqual(vanityAddressFromRecord(otherZero), salted.address, "another salt re-keys the same counter");
+  // Entropy-only sessions fall back to the digest of the entropy inputs.
+  const digest = vanitySessionSalt("", ["415263"]);
+  assert.match(digest, /^[0-9a-f]{64}$/);
+  const fallback = grind("1", 1, 0n, 62n, 1 << 8, "p2pkh", digest);
+  assert.equal(vanityAddressFromRecord(fallback.records[0]), expectedAddress(digest + fallback.records[0].passphrase).address);
+});
+
+test("vanitySessionSalt returns the passphrase verbatim, else digests the entropy inputs", () => {
+  assert.equal(vanitySessionSalt("", []), "", "no inputs, no salt: the public counter mapping");
+  assert.equal(vanitySessionSalt("", ["", "", ""]), "", "empty fields alone never salt");
+  assert.equal(vanitySessionSalt("hunter2", []), "hunter2", "the passphrase is the salt, verbatim");
+  assert.equal(vanitySessionSalt("hunter2", ["roll roll roll"]), "hunter2", "the passphrase wins over the entropy inputs");
+  assert.equal(vanitySessionSalt(null, []), "", "a missing passphrase reads as empty");
+  const salt = vanitySessionSalt("", ["hunter2", "roll roll roll"]);
+  assert.match(salt, /^[0-9a-f]{64}$/);
+  assert.equal(salt, vanitySessionSalt("", ["hunter2", "roll roll roll"]), "same inputs, same salt");
+  assert.equal(salt, vanitySessionSalt("", ["", "hunter2", "", "roll roll roll", ""]), "empty fields do not change the salt");
+  assert.equal(salt, vanitySessionSalt("", ["hunter2", null, "roll roll roll"]), "missing fields read as empty");
+  assert.notEqual(salt, vanitySessionSalt("", ["roll roll roll", "hunter2"]), "field order matters");
+  assert.notEqual(salt, vanitySessionSalt("", ["hunter2", "roll roll rolL"]), "any input change re-salts");
+  // Pinned recipe: SHA-256 of the JSON array of the non-empty inputs, so the
+  // digest cannot drift silently.
+  assert.equal(salt, createHash("sha256").update(JSON.stringify(["hunter2", "roll roll roll"]), "utf8").digest("hex"));
+});
+
+test("validateVanitySalt bounds the salt to the WASM buffer", () => {
+  assert.equal(validateVanitySalt(""), "");
+  assert.equal(validateVanitySalt("correct horse battery staple"), "correct horse battery staple");
+  assert.equal(validateVanitySalt("x".repeat(VANITY_MAX_SALT_LEN)), "x".repeat(VANITY_MAX_SALT_LEN));
+  assert.throws(() => validateVanitySalt("x".repeat(VANITY_MAX_SALT_LEN + 1)), /256-byte vanity salt limit/);
+  // The limit is UTF-8 bytes, not characters.
+  assert.equal(validateVanitySalt("…".repeat(85)).length, 85, "255 bytes accepted");
+  assert.throws(() => validateVanitySalt("…".repeat(86)), /256-byte vanity salt limit/);
 });
 
 // ── Pool helpers (src/js/vanity.js) ─────────────────────────────────────────
@@ -204,13 +285,20 @@ test("vanityBuckets partitions the range without overlap or gap", () => {
   }
 });
 
-test("validateVanityPrefix enforces a base58 prefix beyond the leading 1", () => {
+test("validateVanityPrefix enforces the selected address type's prefix", () => {
   assert.equal(validateVanityPrefix("1Love"), "1Love");
-  assert.throws(() => validateVanityPrefix("Love"), /starts with/);
-  assert.throws(() => validateVanityPrefix("1"), /alone matches every address/);
-  assert.throws(() => validateVanityPrefix("10"), /base58/); // 0 is not base58
-  assert.throws(() => validateVanityPrefix("1O"), /base58/);
-  assert.throws(() => validateVanityPrefix("1".repeat(35)), /longer than a whole address/);
+  assert.equal(validateVanityPrefix("3Nesting", "p2sh-p2wpkh"), "3Nesting");
+  assert.equal(validateVanityPrefix("BC1QW0RD", "p2wpkh"), "bc1qw0rd");
+  assert.equal(validateVanityPrefix("bc1prrr", "p2tr"), "bc1prrr");
+  assert.throws(() => validateVanityPrefix("Love"), /start with/);
+  assert.throws(() => validateVanityPrefix("1"), /alone matches every/);
+  assert.throws(() => validateVanityPrefix("10"), /Base58/); // 0 is not base58
+  assert.throws(() => validateVanityPrefix("1O"), /Base58/);
+  assert.throws(() => validateVanityPrefix("3".repeat(35), "p2sh-p2wpkh"), /longer than a whole/);
+  assert.throws(() => validateVanityPrefix("bc1q", "p2wpkh"), /alone matches every/);
+  assert.throws(() => validateVanityPrefix("bc1qi", "p2wpkh"), /Bech32/); // i is not bech32 data
+  assert.throws(() => validateVanityPrefix("bc1q" + "q".repeat(39), "p2wpkh"), /longer than a whole/);
+  assert.throws(() => validateVanityPrefix("bc1p" + "q".repeat(59), "p2tr"), /longer than a whole/);
 });
 
 test("validateVanityRange bounds the counter to the passphrase space (u64)", () => {
@@ -225,15 +313,29 @@ test("validateVanityRange bounds the counter to the passphrase space (u64)", () 
   assert.throws(() => validateVanityRange(11, 0n, 1n << 64n), /64-bit counter/);
 });
 
-test("estimateVanityWork is 58^(prefix length - 1)", () => {
+test("estimateVanityWork uses the selected address alphabet", () => {
   assert.equal(estimateVanityWork("1a"), 58n);
   assert.equal(estimateVanityWork("1ab"), 3364n);
   assert.equal(estimateVanityWork("1abc"), 195112n);
+  assert.equal(estimateVanityWork("bc1qz", "p2wpkh"), 32n);
+  assert.equal(estimateVanityWork("bc1qzz", "p2wpkh"), 1024n);
+  assert.equal(estimateVanityWork("bc1pz", "p2tr"), 32n);
 });
 
 test("vanityAddressFromHash160 agrees with the record path", () => {
   const { address, hash160 } = expectedAddress("a");
   assert.equal(vanityAddressFromHash160(hash160), address);
+});
+
+test("every selected vanity script type derives the matching address", () => {
+  for (const script of ["p2pkh", "p2sh-p2wpkh", "p2wpkh", "p2tr"]) {
+    const expected = expectedAddress("a", script);
+    const run = grind(expected.address.slice(0, VANITY_SCRIPTS[script].prefix.length + 1), 1, 0n, 62n, 1 << 8, script);
+    assert.equal(run.status, 0, script);
+    const record = run.records.find((candidate) => candidate.passphrase === "a");
+    assert.ok(record, `${script} includes counter 0`);
+    assert.equal(vanityAddressFromRecord(record, script), expected.address, script);
+  }
 });
 
 // ── Worker protocol (the shipped source, under node:worker_threads) ─────────
@@ -296,8 +398,52 @@ test("worker source: init, grind, progress, done — with a matching hit", async
     const matches = events.filter((message) => message.type === "progress").flatMap((message) => message.matches);
     assert.equal(matches.length, 62);
     assert.equal(matches[0].passphrase, "a");
-    assert.equal(vanityAddressFromHash160(matches[0].hash160), expectedAddress("a").address);
+    assert.equal(vanityAddressFromRecord(matches[0], "p2pkh"), expectedAddress("a").address);
     assert.ok(events.some((message) => message.type === "progress" && message.done === 62n));
+  } finally {
+    await worker.terminate();
+  }
+});
+
+test("worker source: the grind message's salt re-keys the candidates", async () => {
+  const worker = await initWorker();
+  try {
+    const salt = vanitySessionSalt("session passphrase", []);
+    const events = [];
+    worker.onmessage = (event) => events.push(event.data);
+    worker.postMessage({ type: "grind", prefix: "1", passLen: 1, start: 0n, count: 62n, salt });
+    const done = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("worker never finished")), 30000);
+      const poll = setInterval(() => {
+        const last = events.findLast((message) => message.type === "done");
+        if (last) {
+          clearInterval(poll);
+          clearTimeout(timer);
+          resolve(last);
+        }
+      }, 10);
+    });
+    assert.equal(done.done, 62n);
+    const matches = events.filter((message) => message.type === "progress").flatMap((message) => message.matches);
+    assert.equal(matches.length, 62);
+    assert.equal(matches[0].passphrase, "a");
+    assert.equal(vanityAddressFromRecord(matches[0], "p2pkh"), expectedAddress(salt + "a").address);
+    // An over-long salt is rejected with an error, never ground.
+    const errors = [];
+    worker.onmessage = (event) => errors.push(event.data);
+    worker.postMessage({ type: "grind", prefix: "1", passLen: 1, start: 0n, count: 1n, salt: "x".repeat(257) });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("worker never answered")), 30000);
+      const poll = setInterval(() => {
+        if (errors.length) {
+          clearInterval(poll);
+          clearTimeout(timer);
+          resolve();
+        }
+      }, 10);
+    });
+    assert.equal(errors[0].type, "error");
+    assert.match(errors[0].message, /salt/);
   } finally {
     await worker.terminate();
   }
@@ -352,4 +498,50 @@ test("VanityGrinder pool aggregates buckets across workers", async () => {
   const hit = matches.find((match) => match.counter === 1000n);
   assert.equal(hit.passphrase, "qi");
   assert.equal(hit.address, "1Bu6KhqJ6qc6dz2Dkf66LgFNzvcMPzziCT");
+});
+
+test("VanityGrinder pool passes the selected script type to workers", async () => {
+  const expected = expectedAddress("a", "p2wpkh");
+  const matches = [];
+  const result = await new Promise((resolve, reject) => {
+    const grinder = new VanityGrinder({
+      onMatch: (match) => matches.push(match),
+      onDone: resolve,
+      onError: (message) => reject(new Error(message)),
+    }, nodeSpawn);
+    grinder.start({ prefix: expected.address.slice(0, 5), passLen: 1, start: 0n, count: 62n, workers: 2, script: "p2wpkh" });
+  });
+  assert.equal(result.done, 62n);
+  assert.equal(result.stopped, false);
+  const hit = matches.find((match) => match.counter === 0n);
+  assert.equal(hit.passphrase, "a");
+  assert.equal(hit.address, expected.address);
+});
+
+test("VanityGrinder pool salts every worker and reports the full passphrase", async () => {
+  // The session's passphrase is the salt verbatim: a found passphrase reads
+  // as the passphrase followed by the counter odometer string.
+  const salt = vanitySessionSalt("a BIP39 passphrase", ["dice rolls"]);
+  assert.equal(salt, "a BIP39 passphrase");
+  const expected = expectedAddress(salt + "a");
+  const matches = [];
+  const result = await new Promise((resolve, reject) => {
+    const grinder = new VanityGrinder({
+      onMatch: (match) => matches.push(match),
+      onDone: resolve,
+      onError: (message) => reject(new Error(message)),
+    }, nodeSpawn);
+    grinder.start({ prefix: expected.address.slice(0, 2), passLen: 1, start: 0n, count: 62n, workers: 3, salt });
+  });
+  assert.equal(result.done, 62n);
+  assert.equal(result.stopped, false);
+  const hit = matches.find((match) => match.counter === 0n);
+  // The reported passphrase is the complete brain-wallet passphrase: the
+  // session salt followed by the counter odometer string.
+  assert.equal(hit.passphrase, salt + "a");
+  assert.equal(hit.address, expected.address);
+  for (const match of matches) {
+    assert.ok(match.passphrase.startsWith(salt));
+    assert.equal(match.address, expectedAddress(match.passphrase).address);
+  }
 });

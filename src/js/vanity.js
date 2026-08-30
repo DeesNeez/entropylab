@@ -2,10 +2,18 @@
 //
 // Counter i maps to a fixed-width base-62 "odometer" string over
 // a-zA-Z0-9 ("aaa…", "aab…", …), that string is the brain-wallet passphrase
-// (private key = SHA-256 of the passphrase), and the legacy P2PKH address is
+// (private key = SHA-256 of the passphrase), and the selected address type is
 // checked against a user-chosen prefix. Everything is deterministic — same
 // counter, same address — so this is a calculator over a user-chosen range,
 // not an entropy source.
+//
+// Session salt: when the Key Derivation tab holds a passphrase, that
+// passphrase itself prefixes every candidate (vanitySessionSalt below), so a
+// found passphrase is the session's passphrase followed by the counter
+// characters and reproduces from the passphrase alone. With no passphrase but
+// entropy entered, the SHA-256 hex digest of those inputs prefixes every
+// candidate instead — the digest, never the inputs themselves, crosses into
+// workers and appears in found passphrases.
 //
 // Buckets: the counter space splits into contiguous ranges, and because the
 // encoding is an odometer, each range is a bucket of passphrases sharing
@@ -13,13 +21,23 @@
 // spawned from an inline Blob source so the shipped file stays self-contained
 // (CSP worker-src blob:).
 import { sha256 } from "@noble/hashes/sha2.js";
-import { createBase58check } from "@scure/base";
+import { ripemd160 } from "@noble/hashes/legacy.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
+import { bech32, bech32m, createBase58check } from "@scure/base";
 import { VANITY_WASM_B64 } from "./vanity-wasm-b64.js";
 import { VANITY_WORKER_SOURCE } from "./vanity-worker.js";
 
 export const VANITY_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 export const VANITY_MAX_PASS_LEN = 32;
-export const VANITY_MAX_PREFIX_LEN = 34;
+export const VANITY_MAX_PREFIX_LEN = 62;
+const VANITY_BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const VANITY_BECH32_ALPHABET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+export const VANITY_SCRIPTS = Object.freeze({
+  "p2pkh": Object.freeze({ code: 0, label: "Legacy P2PKH", prefix: "1", max: 34, bech32: false }),
+  "p2sh-p2wpkh": Object.freeze({ code: 1, label: "Nested SegWit P2SH-P2WPKH", prefix: "3", max: 34, bech32: false }),
+  "p2wpkh": Object.freeze({ code: 2, label: "Native SegWit P2WPKH", prefix: "bc1q", max: 42, bech32: true }),
+  "p2tr": Object.freeze({ code: 3, label: "Taproot P2TR", prefix: "bc1p", max: 62, bech32: true }),
+});
 // The Rust counter is a u64, so the addressable space saturates at u64::MAX.
 const COUNTER_LIMIT = (1n << 64n) - 1n;
 
@@ -35,22 +53,62 @@ const wasmBytes = (() => {
   return bytes;
 })();
 
-// A vanity prefix is base58 and must start with the mainnet P2PKH "1".
-// "1" alone would match every address, so at least one more character is
-// required to keep results meaningful (and the result buffer bounded).
-export function validateVanityPrefix(prefix) {
-  const value = String(prefix ?? "").trim();
-  if (!value.startsWith("1")) throw new Error("A legacy P2PKH address starts with \u201C1\u201D; the prefix must too.");
-  if (value.length < 2) throw new Error("Add at least one character after the leading \u201C1\u201D — \u201C1\u201D alone matches every address.");
-  if (value.length > VANITY_MAX_PREFIX_LEN) throw new Error(`The prefix is longer than a whole address (${VANITY_MAX_PREFIX_LEN} characters).`);
-  if (!/^1[1-9A-HJ-NP-Za-km-z]+$/.test(value)) throw new Error("Addresses are base58: no 0 (zero), O, I, or l characters.");
+const vanityScript = (script) => VANITY_SCRIPTS[script] ?? VANITY_SCRIPTS.p2pkh;
+
+// A vanity prefix must start with the selected address type's fixed leading
+// characters. That fixed prefix alone would match every address of the type,
+// so at least one more character is required to keep results meaningful (and
+// the result buffer bounded).
+export function validateVanityPrefix(prefix, script = "p2pkh") {
+  const meta = vanityScript(script);
+  let value = String(prefix ?? "").trim();
+  if (meta.bech32) value = value.toLowerCase();
+  if (!value.startsWith(meta.prefix)) throw new Error(`${meta.label} addresses start with \u201C${meta.prefix}\u201D; the prefix must too.`);
+  if (value.length <= meta.prefix.length) throw new Error(`Add at least one character after \u201C${meta.prefix}\u201D — \u201C${meta.prefix}\u201D alone matches every ${meta.label} address.`);
+  if (value.length > meta.max) throw new Error(`The prefix is longer than a whole ${meta.label} address (${meta.max} characters).`);
+  const alphabet = meta.bech32 ? VANITY_BECH32_ALPHABET : VANITY_BASE58_ALPHABET;
+  if (![...value.slice(meta.prefix.length)].every((character) => alphabet.includes(character))) {
+    throw new Error(meta.bech32 ? "Bech32 addresses use qpzry9x8gf2tvdw0s3jn54khce6mua7l after the separator (no b, i, o, or 1)." : "Base58 addresses use no 0 (zero), O, I, or l characters.");
+  }
   return value;
 }
 
-// Expected candidates per matching address: each base58 character beyond the
-// leading "1" is one of 58 possibilities.
-export function estimateVanityWork(prefix) {
-  return 58n ** BigInt(prefix.length - 1);
+// The salt buffer the WASM side grinds with caps at 256 bytes
+// (MAX_SALT_LEN in vanity-wasm/src/lib.rs, MAX_SALT in vanity-worker.js).
+export const VANITY_MAX_SALT_LEN = 256;
+
+// Session salt for a grind: the session's passphrase verbatim when one is
+// entered, so a found passphrase is that passphrase followed by the counter
+// characters and reproduces from the passphrase alone. With no passphrase,
+// fall back to the SHA-256 hex digest of the session's non-empty entropy
+// inputs in the caller's fixed order — empty inputs are dropped, so the
+// digest only changes when an actual value does. With no inputs at all the
+// salt is empty and counters map to the public odometer passphrases.
+export function vanitySessionSalt(passphrase, values = []) {
+  const pass = String(passphrase ?? "");
+  if (pass.length) return pass;
+  const list = [...values].map((value) => String(value ?? "")).filter((value) => value.length > 0);
+  if (!list.length) return "";
+  return bytesToHex(sha256(new TextEncoder().encode(JSON.stringify(list))));
+}
+
+// A verbatim passphrase can run past the WASM salt buffer, so check before
+// spawning workers instead of failing mid-grind.
+export function validateVanitySalt(salt) {
+  const text = String(salt ?? "");
+  const length = new TextEncoder().encode(text).length;
+  if (length > VANITY_MAX_SALT_LEN) {
+    throw new Error(`The passphrase above is ${length} UTF-8 bytes, over the ${VANITY_MAX_SALT_LEN}-byte vanity salt limit — shorten it, or clear it to salt with a digest of the entropy inputs instead.`);
+  }
+  return text;
+}
+
+// Expected candidates per matching address: each free base58 character is one
+// of 58 possibilities; each free bech32 character is one of 32.
+export function estimateVanityWork(prefix, script = "p2pkh") {
+  const meta = vanityScript(script);
+  const free = String(prefix ?? "").length - meta.prefix.length;
+  return BigInt(meta.bech32 ? 32 : 58) ** BigInt(Math.max(0, free));
 }
 
 export function validateVanityRange(passLen, start, count) {
@@ -86,8 +144,25 @@ export function vanityBuckets(start, count, workers) {
   return buckets;
 }
 
+const vanityHash160 = (bytes) => ripemd160(sha256(bytes));
+
 export function vanityAddressFromHash160(hash160) {
   return base58check.encode(new Uint8Array([0, ...hash160]));
+}
+
+// The worker record carries HASH160 for hash-based scripts and the x-only
+// output key for P2TR; either way the displayed address is recomputed here.
+export function vanityAddressFromRecord(record, script = "p2pkh") {
+  const meta = vanityScript(script);
+  const payload = record.payload ?? record.hash160;
+  if (meta.code === 3) return bech32m.encode("bc", [1, ...bech32m.toWords(payload.slice(0, 32))]);
+  const hash160 = payload.slice(0, 20);
+  if (meta.code === 1) {
+    const redeem = new Uint8Array([0, 20, ...hash160]);
+    return base58check.encode(new Uint8Array([5, ...vanityHash160(redeem)]));
+  }
+  if (meta.code === 2) return bech32.encode("bc", [0, ...bech32.toWords(hash160)]);
+  return vanityAddressFromHash160(hash160);
 }
 
 // Default spawn: a classic worker from an inline Blob URL, keeping the
@@ -106,7 +181,10 @@ const spawnBlobWorker = () => {
 // One grinding run. Spawns one worker per bucket, streams matches/progress,
 // and terminates the pool when the run completes, is stopped, or fails.
 // Callbacks: onProgress({ done, total, rate }), onMatch({ counter, passphrase,
-// address }), onDone({ done, stopped, found }), onError(message).
+// address }), onDone({ done, stopped, found }), onError(message). The reported
+// passphrase is the full brain-wallet passphrase: `salt` (the session's
+// passphrase verbatim, or the entropy digest fallback; default "") followed
+// by the counter odometer string.
 // `spawn` is the worker factory; it is injectable so the test suite can run
 // this pool under node:worker_threads (which has no Blob URLs).
 export class VanityGrinder {
@@ -119,12 +197,14 @@ export class VanityGrinder {
     this.runId = 0;
   }
 
-  start({ prefix, passLen, start, count, workers }) {
+  start({ prefix, passLen, start, count, workers, script = "p2pkh", salt = "" }) {
     // Any previous run is hard-terminated; its late messages are dropped via
     // the run id so they cannot corrupt the new run's totals.
     this.#terminate();
     const runId = ++this.runId;
     const total = count;
+    const scriptCode = vanityScript(script).code;
+    const saltText = String(salt ?? "");
     const buckets = vanityBuckets(start, count, workers);
     const progress = new Array(buckets.length).fill(0n);
     let found = 0;
@@ -163,12 +243,12 @@ export class VanityGrinder {
         const msg = event.data;
         if (!msg || typeof msg !== "object") return;
         if (msg.type === "ready") {
-          worker.postMessage({ type: "grind", prefix, passLen, start: bucket.start, count: bucket.count });
+          worker.postMessage({ type: "grind", prefix, passLen, start: bucket.start, count: bucket.count, script: scriptCode, salt: saltText });
         } else if (msg.type === "progress") {
           progress[index] = msg.done;
           for (const match of msg.matches) {
             found += 1;
-            this.callbacks.onMatch?.({ counter: match.counter, passphrase: match.passphrase, address: vanityAddressFromHash160(match.hash160) });
+            this.callbacks.onMatch?.({ counter: match.counter, passphrase: saltText + match.passphrase, payload: match.payload, address: vanityAddressFromRecord(match, script) });
           }
           const done = progress.reduce((sum, value) => sum + value, 0n);
           const elapsed = (performance.now() - this.startedAt) / 1000;
@@ -193,6 +273,11 @@ export class VanityGrinder {
 
   stop() {
     for (const worker of this.workers) worker.postMessage({ type: "stop" });
+  }
+
+  cancel() {
+    this.runId += 1;
+    this.#terminate();
   }
 
   #terminate() {
