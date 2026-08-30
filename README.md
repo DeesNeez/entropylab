@@ -23,8 +23,10 @@ Official website: [entropylab.online](https://entropylab.online)
   address types. Script type and the hardened BIP32 purpose index are separate:
   choosing a script restores its conventional 44/49/84/86 purpose, while an
   advanced user can enter any valid hardened purpose index for a custom path.
-- Supports Mainnet and Testnet wallet derivation, multisignature construction,
-  and PSBT address rendering. Mainnet is selected by default.
+- Supports numeric hardened coin-type indexes for single-signature and
+  multisignature derivation. Coin type 0 uses Bitcoin Mainnet, coin type 1 uses
+  Bitcoin Testnet, and custom indexes retain Mainnet address serialization.
+  PSBT address rendering separately supports Mainnet and Testnet.
 - Derives watch-only multisignature wallets from extended public keys without
   requiring private keys. Multisig script type and hardened purpose are
   separate as well; conventional script choices restore their standard purpose,

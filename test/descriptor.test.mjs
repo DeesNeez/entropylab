@@ -66,7 +66,7 @@ function loadSlice(startNeedle, endNeedle, extra) {
 const originPath = loadSlice(
   "function hodlFilterXpub",
   "function hodlParseMultisigCosigner",
-  "const hodlMaxPurpose = 2147483647;\nexport { hodlFilterXpub, hodlNormalizeOriginPath, hodlParseKeyOrigin, hodlOriginPathIndexes, hodlOriginMatchesParsedKey, hodlMultisigPurposeIndex, hodlOriginScriptError, hodlMultisigAccountNumber, hodlSummarizeMultisigAccounts, hodlMultisigAccountWarning, hodlMultisigOriginScriptKind, hodlMultisigScriptEvidence, hodlSummarizeMultisigScriptKinds };",
+  "const hodlMaxPurpose = 2147483647;\nconst Rs = (network) => network === 'mainnet' ? 0 : 1;\nexport { hodlFilterXpub, hodlNormalizeOriginPath, hodlParseKeyOrigin, hodlOriginPathIndexes, hodlOriginMatchesParsedKey, hodlMultisigPurposeIndex, hodlOriginScriptError, hodlMultisigAccountNumber, hodlSummarizeMultisigAccounts, hodlMultisigAccountWarning, hodlMultisigOriginScriptKind, hodlMultisigScriptEvidence, hodlSummarizeMultisigScriptKinds };",
 );
 const {
   hodlFilterXpub,
@@ -145,6 +145,8 @@ test("origin path must match key depth and script", () => {
   );
   assert.equal(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "86h/0h/0h" }, "p2tr", "mainnet", 86), "");
   assert.equal(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "69420h/0h/0h" }, "p2tr", "mainnet", 69420), "");
+  assert.equal(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "48h/69420h/0h/2h" }, "p2wsh", "mainnet", 48, 69420), "");
+  assert.match(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "48h/0h/0h/2h" }, "p2wsh", "mainnet", 48, 69420), /selected coin type/);
   assert.match(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "84h/0h/0h" }, "p2tr", "mainnet", 86), /selected Purpose is 86h/);
   assert.match(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "86h/0h/0h/0h" }, "p2tr", "mainnet", 86), /purposeh\/coinh\/accounth/);
   assert.match(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "86h/1h/0h" }, "p2tr", "mainnet", 86), /0h/);

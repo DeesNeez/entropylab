@@ -46,27 +46,28 @@ test("every enabled button uses orange and black momentary press feedback", () =
   assert.equal(/--selection-fg: #000000;/.test(css), true);
 });
 
-test("all wallet network selectors enable and default to mainnet", () => {
+test("wallet coin type indexes enable and default to mainnet", () => {
   for (const id of ["network", "msig-network"]) {
-    const selectedMainnet = new RegExp(
-      `<select id="${id}"[^>]*><option value="mainnet" selected(?:="selected")?>Bitcoin mainnet · 0h</option>`,
+    const mainnetCoinType = new RegExp(
+      `<input id="${id}" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0"`,
     );
-    assert.match(template, selectedMainnet);
-    assert.match(appWhitespace, selectedMainnet);
+    assert.match(template, mainnetCoinType);
+    assert.match(appWhitespace, mainnetCoinType);
   }
   for (const markup of [template, appWhitespace]) {
-    assert.match(markup, /id="network-help">Hardened coin type index in the derivation path\./);
-    assert.match(markup, /id="msig-network-help">Hardened coin type index in the derivation path\./);
+    assert.match(markup, /id="network-help">Coin type index (?:·|\\xB7) Mainnet (?:·|\\xB7) Hardened (?:·|\\xB7) 0 to 2,147,483,647/);
+    assert.match(markup, /id="msig-network-help">Coin type index (?:·|\\xB7) Mainnet (?:·|\\xB7) Hardened (?:·|\\xB7) 0 to 2,147,483,647/);
     assert.match(markup, /<select id="psbt-network"><option value="mainnet" selected(?:="selected")?>Bitcoin mainnet<\/option>/);
   }
-  assert.doesNotMatch(`${template}\n${app}`, /option value="mainnet"[^>]*disabled/);
-  assert.doesNotMatch(app, /hodlForceTestnet|temporarily disabled/);
-  assert.match(app, /network:"mainnet"/);
+  assert.match(appSource, /function hodlReadCoinType\(input = document\.getElementById\("network"\), mark = true\)/);
+  assert.match(appSource, /function hodlNetworkFromCoinType\(coinType\)/);
+  assert.match(appSource, /Number\(coinType\) === 1 \? "testnet" : "mainnet"/);
+  assert.match(app, /coinType:"0",network:"mainnet"/);
 });
 
 test("single-key network selector is half width on wide screens and full width on narrow screens", () => {
-  assert.match(template, /<label class="field network-field">Network\s*<select id="network"[^>]*>/);
-  assert.match(app, /<label class="field network-field">Network\s*<select id="network"[^>]*>/);
+  assert.match(template, /<label class="field network-field">Network\s*<input id="network"[^>]*>/);
+  assert.match(app, /<label class="field network-field">Network\s*<input id="network"[^>]*>/);
   assert.match(css, /\.key-settings\.single-key-mode \.network-field \{ width: 100%; max-width: 50%; \}/);
   assert.match(
     css,
@@ -408,14 +409,15 @@ test("key derivation separates script type from the hardened purpose index", () 
     assert.match(markup, /id="script-type-field">Script type\s*<select id="script-type"><option value="bip44">Legacy<\/option><option value="bip49">Nested SegWit<\/option><option value="bip84" selected(?:="selected")?>Native SegWit<\/option><option value="bip86">Taproot<\/option><\/select>/);
     assert.match(markup, /id="script-type"[\s\S]*id="purpose"[\s\S]*id="network"[\s\S]*id="account"/);
     assert.match(markup, /id="purpose" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="84"/);
-    assert.match(markup, /id="purpose-help">Hardened purpose index (?:·|\\xB7) 0 to 2,147,483,647/);
+    assert.match(markup, /id="purpose-help">Purpose index (?:·|\\xB7) Hardened (?:·|\\xB7) 0 to 2,147,483,647/);
+    assert.match(markup, /id="account-help">Account index (?:·|\\xB7) Hardened (?:·|\\xB7) 0 to 2,147,483,647/);
   }
   assert.match(appSource, /function hodlReadPurpose\(mark = true\)/);
   assert.match(appSource, /hodlSetSelectedScriptType\(target\.value, true\)/);
   assert.match(appSource, /let derivedDefinition = \{ \.\.\.definition, purpose: purposeIndex \}/);
-  assert.match(appSource, /originPath = `\$\{purposeIndex\}h\/\$\{Rs\(network\)\}h\/\$\{accountIndex\}h`/);
+  assert.match(appSource, /originPath = `\$\{purposeIndex\}h\/\$\{coinType\}h\/\$\{accountIndex\}h`/);
   assert.match(appSource, /context\.textContent = `\$\{definition\.label\} \\xB7 Purpose \$\{purpose\}h`/);
-  assert.match(appSource, /fields: \{ pass: "", script: "bip84", purpose: "84", network: "mainnet"/);
+  assert.match(appSource, /fields: \{ pass: "", script: "bip84", purpose: "84", coinType: "0", network: "mainnet"/);
 });
 
 test("multisig script type and placeholders follow detected co-signer exports", () => {
@@ -425,7 +427,7 @@ test("multisig script type and placeholders follow detected co-signer exports", 
     assert.match(markup, /id="msig-go"[^>]*aria-describedby="msig-script-warning"/);
   }
   assert.match(template, /placeholder="\[fingerprint\/48h\/0h\/0h\/2h\]Zpub…"/);
-  assert.match(app, /function hodlMultisigKeyPlaceholder\(kind,network,purpose\)/);
+  assert.match(app, /function hodlMultisigKeyPlaceholder\(kind,network,purpose,coinType=Rs\(network\)\)/);
   assert.match(appWhitespace, /kind==="p2sh"&&purpose===45\)return`\[fingerprint\/\$\{purposeStep\}\]\$\{testnet\?"tpub":"xpub"\}(?:…|\\u2026)`/);
   assert.match(appWhitespace, /kind==="p2sh"\)return`\[fingerprint\/\$\{purposeStep\}\/\$\{coin\}\/0h\]\$\{testnet\?"tpub":"xpub"\}(?:…|\\u2026)`/);
   assert.match(app, /testnet\?"Upub":"Ypub"/);
@@ -441,7 +443,7 @@ test("multisig script type and placeholders follow detected co-signer exports", 
 });
 
 test("key derivation shows the relevant paste-ready multisig co-signer exports", () => {
-  assert.match(app, /function hodlBuildMultisigCosignerExports\(root,network,accountIndex,masterFingerprint\)/);
+  assert.match(app, /function hodlBuildMultisigCosignerExports\(root,network,accountIndex,masterFingerprint,coinType=Rs\(network\)\)/);
   assert.match(appWhitespace, /accountId:"bip44",kind:"p2sh",standard:"bip45",label:"Legacy (?:·|\\xB7) BIP45 (?:·|\\xB7) No account",family:"x",accountPath:"m\/45'",originPath:"45h"/);
   assert.match(appWhitespace, /accountId:"bip44",kind:"p2sh",standard:"bip87",label:`Legacy (?:·|\\xB7) BIP87 (?:·|\\xB7) Account \$\{accountIndex\}`,family:"x",accountPath:`m\/87'\/\$\{coinType\}'\/\$\{accountIndex\}'`,originPath:`87h\/\$\{coinType\}h\/\$\{accountIndex\}h`/);
   assert.match(appWhitespace, /accountId:"bip49",kind:"p2sh-p2wsh",label:"Nested SegWit (?:·|\\xB7) BIP48",family:"y",scriptIndex:1/);
@@ -449,7 +451,7 @@ test("key derivation shows the relevant paste-ready multisig co-signer exports",
   assert.match(appWhitespace, /accountId:"bip86",kind:"p2tr",label:"Taproot (?:·|\\xB7) BIP86",family:"x"/);
   assert.match(app, /accountPath=definition\.accountPath\|\|`m\/48'\/\$\{coinType\}'\/\$\{accountIndex\}'\/\$\{definition\.scriptIndex\}'`/);
   assert.match(app, /value:`\[\$\{masterFingerprint\}\/\$\{originPath\}\]\$\{publicKey\}`/);
-  assert.match(app, /multisigCosignerExports:root\.privateKey\?hodlBuildMultisigCosignerExports\(root,network,accountIndex,masterFingerprint\):\[\]/);
+  assert.match(app, /multisigCosignerExports:root\.privateKey\?hodlBuildMultisigCosignerExports\(root,network,accountIndex,masterFingerprint,coinType\):\[\]/);
   assert.match(app, /function hodlRenderMultisigCosignerExport\(exports,accountId\)/);
   assert.match(app, /exports\.filter\(candidate=>candidate\.accountId===accountId\)/);
   assert.match(appWhitespace, /items\.map\(item=>ye\(`Multisig co-signer \$\{item\.prefix\} · \$\{item\.label\}`,item\.value\)\)\.join\(""\)/);
@@ -510,7 +512,8 @@ test("multisig separates script type from purpose and keeps the Legacy BIP87 sho
   for (const markup of [template, app]) {
     assert.match(markup, /id="msig-script-type"[\s\S]*id="msig-purpose"[\s\S]*id="msig-network"[\s\S]*id="msig-account"/);
     assert.match(markup, /id="msig-purpose" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="48"/);
-    assert.match(markup, /id="msig-purpose-help">Hardened purpose index (?:·|\\xB7) 0 to 2,147,483,647/);
+    assert.match(markup, /id="msig-purpose-help">Purpose index (?:·|\\xB7) Hardened (?:·|\\xB7) 0 to 2,147,483,647/);
+    assert.match(markup, /id="msig-account-help">Account index (?:·|\\xB7) Hardened (?:·|\\xB7) Derived from co-signer key origins/);
     assert.match(markup, /id="msig-legacy-account-toggle" hidden/);
     assert.match(markup, /id="msig-legacy-bip87" type="checkbox"/);
     assert.match(markup, />Use standardized BIP87 accounts</);
@@ -618,7 +621,7 @@ test("multisig consistently uses derive for its heading and action", () => {
   assert.match(app, /function hodlValidatedMsigInputs\(\)/);
   assert.match(appSource, /hodlValidatedMsigInputs\(\);\s*ready = true/);
   assert.match(app, /button\.disabled=!ready/);
-  assert.match(app, /let\{network,count,addressStart,n,m,kind,purpose,legacyStandard,nodes,xpubs,keyTokens,accountSummary,accountWarning\}=hodlValidatedMsigInputs\(\)/);
+  assert.match(app, /let\{network,coinType,count,addressStart,n,m,kind,purpose,legacyStandard,nodes,xpubs,keyTokens,accountSummary,accountWarning\}=hodlValidatedMsigInputs\(\)/);
 });
 
 test("key and multisig add controls stay pinned to the right of their tab strips", () => {

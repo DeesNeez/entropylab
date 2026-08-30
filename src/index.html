@@ -126,17 +126,17 @@ words, pick one of the checksum words.</span></span>
           </label>
           <label class="field" id="purpose-field">Purpose
             <input id="purpose" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="84" aria-describedby="purpose-help">
-            <span class="field-note" id="purpose-help">Hardened purpose index · 0 to 2,147,483,647</span>
+            <span class="field-note" id="purpose-help">Purpose index · Hardened · 0 to 2,147,483,647</span>
           </label>
         </div>
         <div class="key-settings-row" id="account-address-settings">
           <label class="field network-field">Network
-            <select id="network" aria-describedby="network-help"><option value="mainnet" selected="selected">Bitcoin mainnet · 0h</option><option value="testnet">Testnet (practice) · 1h</option></select>
-            <span class="field-note" id="network-help">Hardened coin type index in the derivation path.</span>
+            <input id="network" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0" aria-describedby="network-help">
+            <span class="field-note" id="network-help">Coin type index · Mainnet · Hardened · 0 to 2,147,483,647</span>
           </label>
           <label class="field" id="account-field">Account
             <input id="account" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0" aria-describedby="account-help">
-            <span class="field-note" id="account-help">Hardened account index · 0 to 2,147,483,647</span>
+            <span class="field-note" id="account-help">Account index · Hardened · 0 to 2,147,483,647</span>
           </label>
         </div>
         <div class="key-settings-row address-range-settings" id="address-range-settings">
@@ -208,18 +208,18 @@ words, pick one of the checksum words.</span></span>
           </label>
           <label class="field">Purpose
             <input id="msig-purpose" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="48" aria-describedby="msig-purpose-help msig-purpose-warning">
-            <span class="field-note" id="msig-purpose-help">Hardened purpose index · 0 to 2,147,483,647</span>
+            <span class="field-note" id="msig-purpose-help">Purpose index · Hardened · 0 to 2,147,483,647</span>
             <span class="field-note msig-purpose-warning" id="msig-purpose-warning" role="status" hidden></span>
           </label>
         </div>
         <div class="key-settings-row">
           <label class="field">Network
-            <select id="msig-network" aria-describedby="msig-network-help"><option value="mainnet" selected="selected">Bitcoin mainnet · 0h</option><option value="testnet">Testnet (practice) · 1h</option></select>
-            <span class="field-note" id="msig-network-help">Hardened coin type index in the derivation path.</span>
+            <input id="msig-network" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0" aria-describedby="msig-network-help">
+            <span class="field-note" id="msig-network-help">Coin type index · Mainnet · Hardened · 0 to 2,147,483,647</span>
           </label>
           <label class="field">Account
             <input id="msig-account" type="text" value="" placeholder="Derived from keys" disabled aria-describedby="msig-account-help msig-account-warning">
-            <span class="field-note" id="msig-account-help">Derived from co-signer key origins.</span>
+            <span class="field-note" id="msig-account-help">Account index · Hardened · Derived from co-signer key origins.</span>
             <span class="field-note msig-account-warning" id="msig-account-warning" role="status" hidden></span>
           </label>
         </div>
