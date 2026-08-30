@@ -148,7 +148,7 @@ test("origin path must match key depth and script", () => {
   assert.equal(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "48h/69420h/0h/2h" }, "p2wsh", "mainnet", 48, 69420), "");
   assert.match(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "48h/0h/0h/2h" }, "p2wsh", "mainnet", 48, 69420), /selected coin type/);
   assert.match(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "84h/0h/0h" }, "p2tr", "mainnet", 86), /selected Purpose is 86h/);
-  assert.match(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "86h/0h/0h/0h" }, "p2tr", "mainnet", 86), /purposeh\/coinh\/accounth/);
+  assert.match(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "86h/0h/0h/0h" }, "p2tr", "mainnet", 86), /purpose, coin type, and account/);
   assert.match(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "86h/1h/0h" }, "p2tr", "mainnet", 86), /0h/);
   assert.equal(hodlOriginPathIndexes("48h/1h/0h/2h").at(-1), 0x80000002);
 });
@@ -185,7 +185,18 @@ test("multisig script type is inferred from SLIP-132 prefixes and key origins", 
   assert.equal(hodlMultisigOriginScriptKind({ path: "84h/0h/0h" }), null);
   assert.equal(hodlMultisigPurposeIndex({ path: "45h" }), 45);
   assert.equal(hodlMultisigPurposeIndex({ path: "69420h/0h/0h/2h" }), 69420);
-  assert.throws(() => hodlMultisigPurposeIndex({ path: "48/0h/0h/2h" }), /must be hardened/);
+  assert.equal(hodlMultisigPurposeIndex({ path: "48/0h/0h/2h" }), 48);
+  assert.equal(
+    hodlOriginScriptError(
+      { path: "48/0/0/2h" },
+      "p2wsh",
+      "mainnet",
+      48,
+      0,
+      { purpose: false, coinType: false, account: false, address: false },
+    ),
+    "",
+  );
 
   assert.deepEqual(
     hodlMultisigScriptEvidence({ scope: "multisig", family: "y", origin: { path: "48h/0h/0h/1h" } }),

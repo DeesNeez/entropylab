@@ -115,7 +115,7 @@ test("both duplicate checks and the final script guard use derivation identity",
   assert.match(app, /function hodlDuplicateMultisigKey\(ta, parsed\) \{\s*let canonical = hodlCanonicalMultisigKey\(parsed\)/);
   assert.match(app, /canonical = hodlCanonicalMultisigKey\(parsed\);\s*if \(xpubs\.includes\(canonical\)\) throw new Error\(`Co-signer \$\{index \+ 1\} duplicates an earlier co-signer/);
   // Final defense: a generated script never contains a repeated public key.
-  assert.match(app, /new Set\(receivePublicKeys\.concat\(changePublicKeys\)\.map\(M\.encode\)\)\.size !== receivePublicKeys\.length \+ changePublicKeys\.length/);
+  assert.match(app, /new Set\(publicKeys\.map\(M\.encode\)\)\.size !== publicKeys\.length/);
   // Identity ignores the reserialized extended key (which carries metadata).
   const start = app.indexOf("function hodlCanonicalMultisigKey(");
   const end = app.indexOf("function hodlDuplicateMultisigKey", start);

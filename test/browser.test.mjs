@@ -15,11 +15,12 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -73,6 +74,41 @@ const resolveFirefox = () => {
 
 const firefoxBin = resolveFirefox();
 
+// A snap-confined Firefox (the Ubuntu default: /usr/bin/firefox is a wrapper
+// around /snap/bin/firefox) runs with a private /tmp mount namespace, so a
+// staging area under os.tmpdir() is invisible to the browser: the profile,
+// the file:// test page, and the download directory all silently miss and
+// the suite times out. Unconfined builds (CI runners, mozilla.org tarballs,
+// macOS, Windows) share the host's view of the filesystem.
+const isSnapConfined = (() => {
+  if (process.platform !== "linux") return false;
+  try {
+    const onPath = firefoxBin.includes("/")
+      ? firefoxBin
+      : (process.env.PATH ?? "").split(":").filter(Boolean)
+          .map((dir) => join(dir, firefoxBin)).find((candidate) => existsSync(candidate));
+    if (!onPath) return false;
+    const resolved = realpathSync(onPath);
+    if (resolved.split("/").includes("snap")) return true;
+    // The Ubuntu transition wrapper is a tiny shell script, not an ELF binary.
+    if (statSync(resolved).size < 1024 * 1024) {
+      const content = readFileSync(resolved, "utf8");
+      if (content.includes("/snap/bin") || content.includes("snap install firefox")) return true;
+    }
+  } catch {}
+  return false;
+})();
+
+// For a snap-confined browser, stage under the snap's common directory: the
+// one path the sandbox and this harness both see at the identical absolute
+// location. Everywhere else, keep using the system temp dir.
+const stagingBase = () => {
+  if (!isSnapConfined) return tmpdir();
+  const base = join(homedir(), "snap", "firefox", "common");
+  mkdirSync(base, { recursive: true });
+  return base;
+};
+
 const appVersion = JSON.parse(read("package.json")).version;
 const appFile = "entropylab.html";
 const appSource = join(root, appFile);
@@ -81,7 +117,7 @@ const appSource = join(root, appFile);
 // entropylab.html), and add the instrumented test document and the hostile
 // version manifest.
 const stageSite = () => {
-  const workDir = mkdtempSync(join(tmpdir(), "entropylab-browser-"));
+  const workDir = mkdtempSync(join(stagingBase(), "entropylab-browser-"));
   const siteDir = join(workDir, "site");
   const downloadDir = join(workDir, "downloads");
   const onlineProfile = join(workDir, "profile-online");

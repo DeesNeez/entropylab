@@ -12,26 +12,36 @@ Official website: [entropylab.online](https://entropylab.online)
 ## Features
 
 - Accepts dice rolls, coin flips, hexadecimal entropy, BIP39 seed phrases,
-  extended keys, WIF keys, raw private keys, and Casascius mini private keys.
-  All five BIP39 phrase lengths (12, 15, 18, 21, and 24 words) are supported
-  for every entropy entry method.
+  Electrum 2.0+ native seeds, extended keys, WIF keys, raw private keys, and
+  Casascius mini private keys. All five BIP39 phrase lengths (12, 15, 18, 21,
+  and 24 words) are supported for every entropy entry method. Electrum phrases
+  are detected by HMAC-SHA512("Seed version") and restored with the Electrum
+  PBKDF2 salt — Standard (01) on m/0 and m/1, SegWit (100) on m/0h/0 and
+  m/0h/1 — never treated as BIP39.
 - Derives BIP39 seeds, BIP32 extended keys, wallet fingerprints, addresses,
-  and Bitcoin Core-compatible descriptors. Each master fingerprint is shown
+  and Bitcoin Core-compatible descriptors. Native Electrum seeds use pkh() or
+  wpkh() descriptors on the real Electrum paths. Each master fingerprint is shown
   next to its deterministic [LifeHash](https://lifehash.info) icon so two
   keys can be told apart at a glance.
 - Supports legacy, nested SegWit, native SegWit, and Taproot single-signature
-  address types. Script type and the hardened BIP32 purpose index are separate:
-  choosing a script restores its conventional 44/49/84/86 purpose, while an
-  advanced user can enter any valid hardened purpose index for a custom path.
-- Supports numeric hardened coin-type indexes for single-signature and
-  multisignature derivation. Coin type 0 uses Bitcoin Mainnet, coin type 1 uses
-  Bitcoin Testnet, and custom indexes retain Mainnet address serialization.
+  address types. Derivation-scheme presets cover the BIP44, BIP49, BIP84,
+  BIP86, and six-level BIP48 layouts and label each path level accordingly.
+  A custom mode accepts an arbitrary-depth BIP32 account path, keeps Bitcoin
+  network selection explicit, and appends the selected branch and address
+  ranges. Typing `h` or `'` after a preset index enables its Harden control.
+- Supports numeric coin-type and account indexes for single-signature and
+  multisignature derivation. Purpose, coin type, and account indexes are
+  hardened by default; the starting address index is unhardened by default.
+  Each can be changed independently. Coin type 0 uses Bitcoin Mainnet, coin
+  type 1 uses Bitcoin Testnet, and custom indexes retain Mainnet address
+  serialization. Hardened address children require private key material and
+  therefore cannot be derived from multisig co-signer xpubs.
   PSBT address rendering separately supports Mainnet and Testnet.
 - Derives watch-only multisignature wallets from extended public keys without
-  requiring private keys. Multisig script type and hardened purpose are
-  separate as well; conventional script choices restore their standard purpose,
-  while pasted co-signer origins auto-detect and must agree with the selected
-  purpose.
+  requiring private keys. Multisig script type and purpose are separate as
+  well; conventional script choices restore their standard purpose, while
+  pasted co-signer origins auto-detect and must agree with the selected path
+  indexes and hardening choices.
 - Inspects PSBT v0 transactions, reports PSBT-provided amounts and fees, checks
   for repeated ECDSA nonces from the same public key — including signatures
   carried by finalized scriptSig/witness fields, which are decoded and analyzed
@@ -42,6 +52,17 @@ Official website: [entropylab.online](https://entropylab.online)
   byte are decoded without a key; anything other than exact SIGHASH_ALL is a
   blocking warning. Finalized signatures that cannot be decoded or associated
   with a key block any clean nonce verdict.
+- Accepts a fully signed raw Bitcoin transaction (hex or base64) in the same
+  inspector: outputs, extracted ECDSA nonces, and inscription-envelope hints.
+  Fee and RFC 6979 cannot be checked without previous outputs.
+- With a session seed, root xprv, WIF, or hex key, labels each output as
+  change, receive, or not in this wallet (accounts 0–2, 50 receive + 50
+  change, all four script types). A two-or-more-output transaction with no
+  matching change is a blocking warning. OP_RETURN outputs are decoded for size and a text/hex
+  preview; the tool does not create data-carrier outputs.
+- Scans PSBT tap-leaf scripts and finalized witnesses for inscription envelopes
+  (`OP_FALSE OP_IF "ord"`). Reports content-type, size, and text previews; does
+  not number sats, fetch chain data, create inscriptions, or render images.
 - Derives BIP-85 child entropy from the active key's BIP32 root (or a pasted
   root xprv): English BIP-39 mnemonics (12–24 words), HD-seed WIF, XPRV, HEX,
   and Base64/Base85 passwords. Same parent, application, and index always
@@ -67,6 +88,10 @@ Official website: [entropylab.online](https://entropylab.online)
   counters only reproduce while those inputs stay unchanged. Vanity
   passphrases are brain wallets — without that session salt, anyone grinding
   the same counter space finds the same keys.
+- Derives BIP-352 Silent Payment addresses (`sp1q…` / `tsp1q…`) from a seed or
+  root xprv, including labeled codes, BIP-392 `spscan` / `spspend` descriptors,
+  sender taproot outputs from pasted vin JSON, and receiver verification of
+  pasted x-only outputs. This is a calculator: it does not scan the chain.
 - Runs a quick barrage of startup sanity checks on the host browser (secure
   context, CSPRNG, BigInt, UTF-8 encoding, and NFKD normalization). If any
   check fails, the page is replaced with a failure report listing the failed
@@ -125,6 +150,56 @@ face: 1–3 all mean Heads and 4–6 all mean Tails, so that numeric choice does
 change the resulting BitBox entropy. Wallet security still depends on the
 quality and secrecy of the entropy, seed phrase, passphrase, or private key
 supplied by the user.
+
+## FAQ
+
+### Does EntropyLab generate a seed or private key for me?
+
+No. EntropyLab deterministically transforms entropy or key material that you
+supply. It does not create secret wallet entropy. BIP-85 children are derived
+from the parent root you provide and are reproducible from that same root,
+application, and index.
+
+### Can I enter a real seed phrase on the website?
+
+Do not enter wallet secrets on an internet-connected device. Download the
+self-contained HTML, verify it, transfer it to a trusted air-gapped computer,
+and open it there. Keep backups and verify important results independently
+before receiving funds.
+
+### Does EntropyLab replace a hardware wallet or signing device?
+
+No. EntropyLab is a calculator and verification tool. It can derive recovery
+information, construct watch-only wallet data, and inspect supported PSBT
+details, but it is not intended to be a transaction signer or broadcaster.
+Use a separately verified wallet or signing device when spending bitcoin.
+
+### How should I check an address or descriptor before using it?
+
+Derive the same wallet with an independent implementation or signing device
+and compare the address, derivation path, fingerprint, and descriptor. Do not
+rely on matching only a shortened value or a visual icon.
+
+### How do I know the downloaded HTML is authentic?
+
+Follow [Verifying the download](#verifying-the-download). Check the SHA-256
+manifest together with the GitHub artifact attestation, or build the file from
+the reviewed source. A checksum by itself detects changed bytes but does not
+authenticate who produced them.
+
+### Why does EntropyLab accept short dice or card transcripts?
+
+Short inputs are useful for deterministic tests, demonstrations, and recovery
+experiments, so they are accepted with a warning. Hashing a short transcript
+does not add entropy. Never secure funds with an input below the displayed
+recommendation.
+
+### How should I report a possible security problem?
+
+Do not open a public issue for a suspected vulnerability involving incorrect
+derivations, secret exposure, injected code, unexpected network access, or
+possible loss of funds. Follow the private reporting instructions in
+[SECURITY.md](SECURITY.md).
 
 ## Building from source
 

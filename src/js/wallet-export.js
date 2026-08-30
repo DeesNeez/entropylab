@@ -52,7 +52,7 @@ var hodlWalletExport = (() => {
   };
 
   // OutputType (wallet): pkh=0, sh(wpkh)=1, wpkh=2, tr=3.
-  const OUTPUT_TYPES = { bip44: 0, bip49: 1, bip84: 2, bip86: 3 };
+  const OUTPUT_TYPES = { bip44: 0, bip49: 1, bip84: 2, bip86: 3, "electrum-standard": 0, "electrum-segwit": 2, "electrum-2fa": 0, "electrum-2fa-segwit": 2 };
 
   // DER-encoded secp256k1 private key (Bitcoin Core CPrivKey form): static
   // template, insert the 32-byte secret and the 33-byte compressed pubkey.

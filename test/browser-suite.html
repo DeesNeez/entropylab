@@ -592,11 +592,16 @@
       toggle.click();
       assert(toggle.dataset.themeMode === flipped, `Toggle did not flip from ${opening} to ${flipped}`);
       assert((document.documentElement.dataset.theme === "light") === (flipped === "light"), "The root theme attribute did not follow the toggle");
-      // The ground eases between themes, so the colour is read once it settles
-      // rather than in the same frame as the click.
+      // The ground eases between themes unless the operating system asks for
+      // reduced motion. macOS CI commonly enables that preference, so test
+      // the browser's requested behavior instead of requiring an animation.
       const easing = getComputedStyle(document.body);
-      assert(/background-color/.test(easing.transitionProperty), "The page background does not transition");
-      assert(easing.transitionDuration === "0.21s", `Background transition is ${easing.transitionDuration}, not 0.21s`);
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        assert(easing.transitionDuration.split(",").every((duration) => duration.trim() === "0s"), `Reduced-motion background transition is ${easing.transitionDuration}, not disabled`);
+      } else {
+        assert(/background-color/.test(easing.transitionProperty), "The page background does not transition");
+        assert(easing.transitionDuration === "0.21s", `Background transition is ${easing.transitionDuration}, not 0.21s`);
+      }
       await until(() => background() !== openingBackground, "the page background to reach the flipped theme");
       // Both modes persist explicitly: dark is no longer an absent key, which
       // now means "follow the system" instead.
@@ -997,20 +1002,76 @@
     scriptType.value = "bip84";
     scriptType.dispatchEvent(new Event("change", { bubbles: true }));
     equal(purpose.value, "84", "Native SegWit did not restore its standard purpose");
+    assert(document.getElementById("purpose-harden").checked, "Purpose did not default to hardened");
+    assert(document.getElementById("network-harden").checked, "Coin type did not default to hardened");
+    assert(document.getElementById("account-harden").checked, "Account did not default to hardened");
+    assert(!document.getElementById("address-start-harden").checked, "Starting address index did not default to unhardened");
+    const scheme = document.getElementById("derivation-scheme");
+    scheme.value = "bip48";
+    scheme.dispatchEvent(new Event("change", { bubbles: true }));
+    equal(purpose.value, "48", "BIP48 did not restore its standard purpose");
+    assert(!document.getElementById("scheme-script-index-field").hidden, "BIP48 did not expose its script type path level");
+    const schemeScriptIndex = document.getElementById("scheme-script-index");
+    document.getElementById("scheme-script-index-harden").checked = false;
+    input(schemeScriptIndex, "1'");
+    equal(schemeScriptIndex.value, "1", "A typed BIP48 hardening suffix was not removed from the numeric value");
+    assert(document.getElementById("scheme-script-index-harden").checked, "A typed apostrophe did not harden the BIP48 script type level");
+    assert(document.querySelector('[data-path="account"]').textContent.includes("/48'/0'/0'/1'"), "The BIP48 script type level did not reach the path preview");
+    scheme.value = "custom";
+    scheme.dispatchEvent(new Event("change", { bubbles: true }));
+    assert(!document.getElementById("custom-derivation-settings").hidden, "Custom mode did not expose its arbitrary path input");
+    assert(document.getElementById("purpose-network-settings").hidden, "Custom mode retained the preset semantic fields");
+    input(document.getElementById("custom-derivation-path"), "m/7h/8/9'/10");
+    assert(document.querySelector('[data-path="account"]').textContent.includes("m/7'/8/9'/10"), "The arbitrary-depth custom path was not normalized in the preview");
+    scheme.value = "bip84";
+    scheme.dispatchEvent(new Event("change", { bubbles: true }));
+    document.getElementById("purpose-harden").checked = false;
+    input(purpose, "84h");
+    equal(purpose.value, "84", "A typed purpose hardening suffix was not removed from the numeric value");
+    assert(document.getElementById("purpose-harden").checked, "A typed h did not check the purpose Harden control");
     input(purpose, "2147483648");
     assert(document.getElementById("go").disabled && purpose.classList.contains("bad"), "An out-of-range purpose did not block derivation");
     input(purpose, "69420");
+    const purposePrime = purpose.nextElementSibling;
+    equal(purposePrime.dataset.indexValue, "69420", "The purpose prime mirror did not follow the edited number");
+    const purposeStyle = getComputedStyle(purpose);
+    const measure = document.createElement("canvas").getContext("2d");
+    measure.font = `${purposeStyle.fontStyle} ${purposeStyle.fontWeight} ${purposeStyle.fontSize} ${purposeStyle.fontFamily}`;
+    const expectedPrimeRight = purpose.getBoundingClientRect().left + parseFloat(purposeStyle.paddingLeft) + measure.measureText("69420'").width;
+    assert(Math.abs(purposePrime.getBoundingClientRect().right - expectedPrimeRight) < 2, "The purpose prime was not positioned directly after its number");
     const network = document.getElementById("network");
-    assert(network?.matches('input[type="number"]'), "Coin type index input is missing");
+    assert(network?.matches('input[type="text"][inputmode="numeric"]'), "Coin type index input is missing");
     input(network, "2147483648");
     assert(document.getElementById("go").disabled && network.classList.contains("bad"), "An out-of-range coin type did not block derivation");
     input(network, "69420");
     assert(document.getElementById("network-help").textContent.includes("Custom · Mainnet addresses"), "A custom coin type did not explain its address network");
-    assert(document.querySelector('[data-path="account"]').textContent.includes("/69420h/"), "The custom coin type did not reach the derivation path preview");
+    assert(document.querySelector('[data-path="account"]').textContent.includes("/69420'/"), "The hardened custom coin type did not reach the derivation path preview");
+    document.getElementById("network-harden").click();
+    assert(document.querySelector('[data-path="account"]').textContent.includes("/69420/"), "Turning off Harden did not remove the coin type prime");
+    document.getElementById("network-harden").click();
     network.value = "1";
     network.dispatchEvent(new Event("input", { bubbles: true }));
-    input(document.getElementById("address-start"), "7");
-    input(document.getElementById("address-range"), "5");
+    const addressStart = document.getElementById("address-start");
+    const addressRange = document.getElementById("address-range");
+    const branchStart = document.getElementById("branch-start");
+    const branchRange = document.getElementById("branch-range");
+    const branchHarden = document.getElementById("branch-start-harden");
+    equal(branchStart.value, "0", "Address branches did not start at Receive by default");
+    equal(branchRange.value, "2", "Address branches did not include Receive and Change by default");
+    assert(!branchHarden.checked, "Starting address branch did not default to unhardened");
+    equal(document.getElementById("branch-range-help").textContent, "Derives Receive and Change branches · Max 2");
+    input(addressRange, "10001");
+    equal(addressRange.value, "10000", "An oversized singlesig address range was not clamped immediately");
+    assert(!addressStart.classList.contains("bad") && !addressRange.classList.contains("bad"), "Clamping an oversized singlesig range left an invalid field state");
+    assert(document.getElementById("derivation-path-error").hidden, "Clamping an oversized singlesig range left a derivation warning");
+    input(addressRange, "5");
+    input(addressStart, "2147483646");
+    equal(addressRange.max, "2", "A near-limit starting index did not lower the singlesig range maximum");
+    equal(addressRange.value, "2", "A singlesig range beyond the last address index was not clamped");
+    equal(document.getElementById("address-range-help").textContent, "Derives 2 receive and 2 change addresses · Max 2");
+    input(addressStart, "7");
+    input(addressRange, "5");
+    equal(addressRange.max, "10000", "Moving away from the address-index limit did not restore the normal range maximum");
     const derive = await until(() => !document.getElementById("go").disabled && document.getElementById("go"), "derive button");
     derive.click();
     await until(() => document.getElementById("save") || document.getElementById("error").textContent, "wallet result");
@@ -1025,11 +1086,102 @@
     equal(receiveLead?.querySelector("p.mono:not(.muted)")?.textContent.trim(), "tb1qq88mz59zeavyc2nvncjmr5fnyhy9wfgg7spmjf", "The custom-purpose Native SegWit address did not match the independent BIP32 vector");
     assert(receiveLead?.querySelector(".muted.mono")?.textContent.includes("m/69420h/1h/0h/0/7"), "The custom purpose was not used in the displayed address path");
     assert(document.querySelector("#acct .kicker")?.textContent.includes("Purpose 69420h"), "The result mislabeled the custom purpose as a standard BIP");
-    assert(document.querySelector("#acct .account-watch-section")?.textContent.includes("/69420h/1h/0h]"), "The custom purpose was not used in the descriptor origin");
+    const watchText = document.querySelector("#acct .account-watch-section")?.textContent || "";
+    assert(watchText.includes("/69420h/1h/0h]"), `The custom purpose was not used in the descriptor origin: ${watchText.slice(0, 600)}`);
     const receiveRows = document.querySelectorAll('#acct [data-address-table="hd-receive"] tbody tr');
     equal(receiveRows.length, 5, "The requested receive address range was not rendered");
     equal(receiveRows[0].querySelector("th")?.textContent.trim(), "7", "The receive table did not start at the requested index");
     equal(receiveRows[4].querySelector("th")?.textContent.trim(), "11", "The receive table did not end at the requested index");
+
+    const addressHarden = document.getElementById("address-start-harden");
+    addressHarden.click();
+    input(addressRange, "1");
+    assert(document.getElementById("address-start-help").textContent.includes("Hardened"), "Address help did not reflect hardened derivation");
+    assert(document.querySelector('[data-path="receive"]').textContent.includes("/0/7'"), "The receive preview did not show a hardened address index");
+    derive.click();
+    await until(
+      () => document.querySelector("#acct .account-address-lead .muted.mono")?.textContent.includes("/7h"),
+      "hardened address result",
+    );
+    addressHarden.click();
+    input(addressRange, "5");
+    derive.click();
+    await until(
+      () => document.querySelectorAll('#acct [data-address-table="hd-receive"] tbody tr').length === 5,
+      "restored unhardened wallet result",
+    );
+  });
+
+  await test("a custom arbitrary-depth account path drives the derived addresses and descriptors", async () => {
+    const scheme = document.getElementById("derivation-scheme");
+    scheme.value = "custom";
+    scheme.dispatchEvent(new Event("change", { bubbles: true }));
+    input(document.getElementById("custom-derivation-path"), "m/84h/1h/0h/777");
+    const customNetwork = document.getElementById("custom-network");
+    customNetwork.value = "testnet";
+    customNetwork.dispatchEvent(new Event("change", { bubbles: true }));
+    input(document.getElementById("branch-start"), "0");
+    input(document.getElementById("branch-range"), "1");
+    input(document.getElementById("address-start"), "7");
+    input(document.getElementById("address-range"), "1");
+    const derive = await until(() => !document.getElementById("go").disabled && document.getElementById("go"), "custom-path derive button");
+    derive.click();
+    await until(() => document.querySelector("#acct .account-address-lead .muted.mono")?.textContent.includes("m/84h/1h/0h/777/0/7"), "custom derived path");
+    const watchText = document.querySelector("#acct .account-watch-section")?.textContent || "";
+    assert(watchText.includes("/84h/1h/0h/777]"), "The custom path did not reach the descriptor key origin");
+    assert(document.querySelector("#acct .account-address-lead p.mono:not(.muted)")?.textContent.trim().startsWith("tb1"), "The explicit custom testnet selection did not control address encoding");
+
+    scheme.value = "bip84";
+    scheme.dispatchEvent(new Event("change", { bubbles: true }));
+    input(document.getElementById("purpose"), "69420");
+    input(document.getElementById("network"), "1");
+    input(document.getElementById("branch-range"), "2");
+    input(document.getElementById("address-range"), "5");
+  });
+
+  await test("custom address branches are labeled and limited to the selected one or two tables", async () => {
+    const branchStart = document.getElementById("branch-start");
+    const branchRange = document.getElementById("branch-range");
+    const branchHarden = document.getElementById("branch-start-harden");
+    const addressRange = document.getElementById("address-range");
+    const derive = document.getElementById("go");
+    input(addressRange, "1");
+    input(branchStart, "2");
+    input(branchRange, "1");
+    equal(document.querySelector('[data-branch-path-label="0"]').textContent, "Custom branch 2");
+    assert(document.querySelector('[data-branch-path-row="1"]').hidden, "The unused second branch preview remained visible");
+    assert(document.querySelector('[data-path="receive"]').textContent.includes("/2/7"), "The custom branch did not reach the derivation preview");
+    derive.click();
+    await until(() => document.querySelector('#acct [data-address-table="hd-branch-2"]'), "custom branch 2 result");
+    assert(!document.querySelector('#acct [data-address-table="hd-receive"]'), "An unselected Receive table was rendered");
+    assert(!document.querySelector('#acct [data-address-table="hd-change"]'), "An unselected Change table was rendered");
+    assert(document.querySelector("#acct .account-address-lead h4")?.textContent.includes("Custom branch 2 address #7"), "The custom branch QR label was unclear");
+    assert(document.querySelector('#acct .account-address-lead .qr[aria-label="Custom branch 2 address 7 QR code"]'), "The first custom branch address was not used for the QR");
+
+    branchHarden.click();
+    assert(document.getElementById("branch-start-help").textContent.includes("Hardened"), "Address branch help did not reflect hardened derivation");
+    assert(document.querySelector('[data-path="receive"]').textContent.includes("/2'/7"), "The custom branch preview did not show a hardened branch index");
+    derive.click();
+    await until(() => document.querySelector('#acct .account-address-lead .muted.mono')?.textContent.includes("/2h/7"), "hardened address branch result");
+    const hardenedWatchText = document.querySelector("#acct .account-watch-section")?.textContent || "";
+    assert(hardenedWatchText.includes("/2h]") && hardenedWatchText.includes("/*"), "The hardened branch watch-only descriptor did not use a branch-level xpub origin");
+    branchHarden.click();
+
+    input(branchRange, "2");
+    derive.click();
+    await until(() => document.querySelector('#acct [data-address-table="hd-branch-3"]'), "custom branch 3 result");
+    assert(document.querySelector('#acct [data-address-table="hd-branch-2"]'), "The first selected custom branch table was missing");
+    equal(document.querySelectorAll("#acct .wallet-address-table").length, 2, "More than the selected two branch tables were rendered");
+    assert(document.querySelector("#acct .account-watch-section")?.textContent.includes("/<2;3>/*"), "The custom branch multipath descriptor omitted the selected branches");
+
+    input(branchStart, "2147483647");
+    equal(branchRange.max, "1", "The final BIP32 branch did not limit the branch range to one");
+    equal(branchRange.value, "1", "The final BIP32 branch did not clamp the branch range");
+    input(branchStart, "0");
+    input(branchRange, "2");
+    input(addressRange, "5");
+    derive.click();
+    await until(() => document.querySelector('#acct [data-address-table="hd-change"] table[aria-rowcount="6"]'), "restored standard branch tables");
   });
 
   await test("large address ranges scroll continuously with a bounded number of rendered rows", async () => {
@@ -1167,8 +1319,29 @@
     equal(document.getElementById("msig-n").value, "1");
     equal(document.querySelectorAll("#msig-keys textarea").length, 1);
     input(document.getElementById("msig-x-0"), bip87Export);
-    input(document.getElementById("msig-address-start"), "11");
-    input(document.getElementById("msig-address-range"), "5");
+    const multisigAddressStart = document.getElementById("msig-address-start");
+    const multisigAddressRange = document.getElementById("msig-address-range");
+    const multisigBranchStart = document.getElementById("msig-branch-start");
+    const multisigBranchRange = document.getElementById("msig-branch-range");
+    const multisigBranchHarden = document.getElementById("msig-branch-start-harden");
+    equal(multisigBranchStart.value, "0", "Multisig address branches did not start at Receive by default");
+    equal(multisigBranchRange.value, "2", "Multisig address branches did not include Receive and Change by default");
+    assert(!multisigBranchHarden.checked, "Multisig address branch did not default to unhardened");
+    multisigBranchHarden.click();
+    assert(document.getElementById("msig-branch-start-help").textContent.includes("Hardened"), "Multisig address branch help did not reflect hardened derivation");
+    assert(document.getElementById("msig-go").disabled, "Multisig allowed hardened branch derivation from account-level public keys");
+    multisigBranchHarden.click();
+    input(multisigAddressRange, "10001");
+    equal(multisigAddressRange.value, "10000", "An oversized multisig address range was not clamped immediately");
+    assert(!multisigAddressStart.classList.contains("bad") && !multisigAddressRange.classList.contains("bad"), "Clamping an oversized multisig range left an invalid field state");
+    input(multisigAddressRange, "5");
+    input(multisigAddressStart, "2147483646");
+    equal(multisigAddressRange.max, "2", "A near-limit starting index did not lower the multisig range maximum");
+    equal(multisigAddressRange.value, "2", "A multisig range beyond the last address index was not clamped");
+    equal(document.getElementById("msig-address-range-help").textContent, "Derives 2 receive and 2 change addresses · Max 2");
+    input(multisigAddressStart, "11");
+    input(multisigAddressRange, "5");
+    equal(multisigAddressRange.max, "10000", "Moving away from the multisig address-index limit did not restore the normal range maximum");
     const deriveMultisig = await until(() => !document.getElementById("msig-go").disabled && document.getElementById("msig-go"), "1-of-1 BIP87 derive button");
     deriveMultisig.click();
     await until(() => document.querySelector("#out .account-result-card") || document.getElementById("msig-error").textContent, "1-of-1 BIP87 result");
@@ -1184,6 +1357,18 @@
     const multisigReceiveRows = document.querySelectorAll('#out [data-address-table="msig-receive"] tbody tr');
     equal(multisigReceiveRows.length, 5, "The requested multisig receive address range was not rendered");
     equal(multisigReceiveRows[0].querySelector("th")?.textContent.trim(), "11", "The multisig receive table did not start at the requested index");
+
+    input(multisigBranchStart, "2");
+    input(multisigBranchRange, "1");
+    input(multisigAddressRange, "1");
+    deriveMultisig.click();
+    await until(() => document.querySelector('#out [data-address-table="msig-branch-2"]'), "custom multisig branch result");
+    assert(!document.querySelector('#out [data-address-table="msig-receive"]'), "An unselected multisig Receive table was rendered");
+    assert(!document.querySelector('#out [data-address-table="msig-change"]'), "An unselected multisig Change table was rendered");
+    assert(document.querySelector("#out .account-address-lead h4")?.textContent.includes("Custom branch 2 address #11"), "The custom multisig branch QR label was unclear");
+    input(multisigBranchStart, "0");
+    input(multisigBranchRange, "2");
+    input(multisigAddressRange, "5");
 
     input(document.getElementById("msig-x-0"), "");
     multisigScript.value = "p2wsh";

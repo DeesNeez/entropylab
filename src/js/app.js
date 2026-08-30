@@ -4,12 +4,31 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 // is a drop-in for the noble/curves surface this file uses (see
 // src/js/secp256k1.js). App boot waits for the module to be ready.
 import { secp256k1 as xe, secp256k1Ready } from "./secp256k1.js";
+import {
+  createLabeledSilentPaymentAddress,
+  createSilentPaymentOutputs,
+  decodeSilentPaymentAddress,
+  encodeSilentPaymentAddress,
+  encodeSpscan,
+  encodeSpspend,
+  formatSpDescriptor,
+  hrpForNetwork as hodlSpHrp,
+  p2trAddressFromXonly,
+  scanSilentPaymentOutputs,
+  spendPrivForOutput,
+  bytesToHex as hodlSpBytesToHex,
+} from "./bip352.js";
+import { inspectPsbtInscriptions, describeEnvelope } from "./inscription.js";
+import { parseOpReturn, describeOpReturn } from "./opreturn.js";
+import { parseRawTx, extractEcdsaSignatures, inscriptionHints, isPsbtMagic } from "./tx.js";
+import { indexHdKey, indexSingleKey, matchOwnership, pathLabel } from "./ownership.js";
 import { createBase58check as fi, hex as M } from "@scure/base";
 import { HDKey as Gt } from "@scure/bip32";
 import { entropyToMnemonic as bi, mnemonicToEntropy as Er, mnemonicToSeedSync as wi, validateMnemonic as Pn } from "@scure/bip39";
 import { wordlist as bip39English } from "@scure/bip39/wordlists/english.js";
 import { Address as hodlBitcoinAddress, NETWORK as Ie, OutScript as Oe, TEST_NETWORK as mo, p2pkh as ir, p2sh as Jr, p2tr as en, p2wpkh as Tt, utils as bitcoinUtils } from "@scure/btc-signer";
 import { renderSVG as Xs } from "uqr";
+import { detectElectrumSeed, electrumMnemonicToSeed, grindElectrumSeed, entropyBytesToInt, electrumAccountDefinition, ELECTRUM_PREFIXES } from "./electrum.js";
 import { BIP39_LANGUAGE_ENGLISH, BIP85_APPS, bip85Path, deriveApplication, parseHardenedIndex, wipeBip85Result, wipeBytes as hodlWipeBytes } from "./bip85.js";
 import { VANITY_SCRIPTS, VanityGrinder, estimateVanityWork, validateVanityPrefix, validateVanityRange, validateVanitySalt, vanitySessionSalt } from "./vanity.js";
 const Ae = Object.freeze(bip39English);
@@ -139,6 +158,14 @@ function Pr(e, t, r = () => {
   return e;
 }
 var sr = fi(Z), ff = BigInt("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141"), To = [{ id: "bip44", bip: "BIP44", label: "Legacy", short: "Legacy 1\u2026", beginner: "Addresses that start with 1. Oldest type. Bitcoin Core can import these with importprivkey.", script: "p2pkh", purpose: 44, slip: "x" }, { id: "bip49", bip: "BIP49", label: "Nested SegWit", short: "Nested 3\u2026", beginner: "Addresses that start with 3. A SegWit script wrapped so older wallets can still send to it.", script: "p2sh-p2wpkh", purpose: 49, slip: "y" }, { id: "bip84", bip: "BIP84", label: "Native SegWit", short: "SegWit bc1q\u2026", beginner: "Addresses that start with bc1q. The default in Bitcoin Core, Sparrow, and Electrum today.", script: "p2wpkh", purpose: 84, slip: "z" }, { id: "bip86", bip: "BIP86", label: "Taproot", short: "Taproot bc1p\u2026", beginner: "Addresses that start with bc1p. Newest type. Use this if your wallet speaks Taproot.", script: "p2tr", purpose: 86, slip: "v" }], cr = { mainnet: { x: { pub: 76067358, prv: 76066276, pubName: "xpub", prvName: "xprv" }, y: { pub: 77429938, prv: 77428856, pubName: "ypub", prvName: "yprv" }, z: { pub: 78792518, prv: 78791436, pubName: "zpub", prvName: "zprv" }, v: { pub: 73342198, prv: 73341116, pubName: "vpub", prvName: "vprv" } }, testnet: { x: { pub: 70617039, prv: 70615956, pubName: "tpub", prvName: "tprv" }, y: { pub: 71979618, prv: 71978536, pubName: "upub", prvName: "uprv" }, z: { pub: 73342198, prv: 73341116, pubName: "vpub", prvName: "vprv" }, v: { pub: 39277699, prv: 39276616, pubName: "npub", prvName: "nprv" } } };
+var hodlDerivationSchemes = {
+  bip44: { id: "bip44", label: "BIP44", purpose: 44, script: "bip44" },
+  bip49: { id: "bip49", label: "BIP49", purpose: 49, script: "bip49" },
+  bip84: { id: "bip84", label: "BIP84", purpose: 84, script: "bip84" },
+  bip86: { id: "bip86", label: "BIP86", purpose: 86, script: "bip86" },
+  bip48: { id: "bip48", label: "BIP48", purpose: 48, scriptIndex: 2 },
+  custom: { id: "custom", label: "Custom path" }
+};
 function _s(e) {
   return e === "mainnet" ? Ie : mo;
 }
@@ -149,8 +176,121 @@ function Rs(e) {
   let index = Number(e);
   return Number.isSafeInteger(index) && index >= 0 && index <= 2147483647 ? index : e === "mainnet" ? 0 : 1;
 }
-function Ao(e, t, r = 0) {
-  return `m/${e.purpose}'/${Rs(t)}'/${r}'`;
+function hodlPathIndex(value, hardened = false) {
+  return `${value}${hardened ? "'" : ""}`;
+}
+function hodlOriginPathIndex(value, hardened = false) {
+  return `${value}${hardened ? "h" : ""}`;
+}
+function hodlDefaultHardening() {
+  return { purpose: true, coinType: true, account: true, script: true, branch: false, address: false };
+}
+function hodlReadHardening(prefix = "") {
+  let defaults = hodlDefaultHardening(), read = (name) => document.getElementById(`${prefix}${name}-harden`)?.checked;
+  return {
+    purpose: read("purpose") ?? defaults.purpose,
+    coinType: read("network") ?? defaults.coinType,
+    account: read("account") ?? defaults.account,
+    script: read("scheme-script-index") ?? defaults.script,
+    branch: read("branch-start") ?? defaults.branch,
+    address: read("address-start") ?? defaults.address
+  };
+}
+function hodlHardeningFromFields(fields = {}) {
+  return {
+    purpose: fields.purposeHarden !== false,
+    coinType: fields.coinTypeHarden !== false,
+    account: fields.accountHarden !== false,
+    script: fields.schemeScriptIndexHarden !== false,
+    branch: Boolean(fields.branchHarden),
+    address: Boolean(fields.addressHarden)
+  };
+}
+function hodlSyncDerivationPrime(input) {
+  let prime = input?.parentElement?.querySelector(".derivation-index-prime");
+  if (prime) prime.dataset.indexValue = String(input.value ?? "");
+}
+function hodlSyncDerivationPrimes(root = document) {
+  root.querySelectorAll(".derivation-index-value > input").forEach(hodlSyncDerivationPrime);
+}
+function hodlSetHardeningControls(prefix = "", hardening = hodlDefaultHardening()) {
+  [["purpose", "purpose"], ["network", "coinType"], ["account", "account"], ["scheme-script-index", "script"], ["branch-start", "branch"], ["address-start", "address"]].forEach(([id, key]) => {
+    let input = document.getElementById(`${prefix}${id}-harden`);
+    if (input) input.checked = Boolean(hardening[key]);
+  });
+  hodlSyncDerivationPrimes();
+}
+function hodlNormalizeDerivationScheme(value) {
+  return hodlDerivationSchemes[value]?.id || "bip84";
+}
+function hodlSelectedDerivationScheme() {
+  return hodlNormalizeDerivationScheme(document.getElementById("derivation-scheme")?.value || hodlKeys[hodlActiveKey]?.fields?.derivationScheme);
+}
+function hodlParseCustomDerivationPath(value) {
+  let raw = String(value ?? "").trim();
+  if (!/^m(?:\/[^/]+)*$/.test(raw)) throw new Error("Custom path must start with m and contain slash-separated BIP32 indexes.");
+  let components = raw === "m" ? [] : raw.slice(2).split("/").map((part) => {
+    let match = /^(\d+)([hH']?)$/.exec(part), index = Number(match?.[1]);
+    if (!match || !Number.isSafeInteger(index) || index < 0 || index > 2147483647) throw new Error("Each custom path index must be a whole number from 0 to 2,147,483,647, optionally followed by h or '.");
+    return { index, hardened: Boolean(match[2]) };
+  });
+  return {
+    components,
+    path: `m${components.map((entry) => `/${hodlPathIndex(entry.index, entry.hardened)}`).join("")}`,
+    originPath: components.map((entry) => hodlOriginPathIndex(entry.index, entry.hardened)).join("/"),
+    hasHardened: components.some((entry) => entry.hardened)
+  };
+}
+function hodlReadDerivationIndex(input, label, mark = true) {
+  let raw = String(input?.value ?? "").trim(), value = Number(raw), valid = /^\d+$/.test(raw) && Number.isSafeInteger(value) && value >= 0 && value <= 2147483647;
+  if (mark) {
+    input?.classList.toggle("bad", !valid);
+    input?.setAttribute("aria-invalid", String(!valid));
+  }
+  if (!valid) throw new Error(`${label} must be a whole number from 0 to 2,147,483,647.`);
+  return value;
+}
+function hodlReadDerivationPlan(mark = true) {
+  let scheme = hodlSelectedDerivationScheme(), hardening = hodlReadHardening();
+  if (scheme === "custom") {
+    let input = document.getElementById("custom-derivation-path"), parsed;
+    try {
+      parsed = hodlParseCustomDerivationPath(input?.value);
+      if (mark) {
+        input?.classList.remove("bad");
+        input?.setAttribute("aria-invalid", "false");
+      }
+    } catch (error) {
+      if (mark) {
+        input?.classList.add("bad");
+        input?.setAttribute("aria-invalid", "true");
+      }
+      throw error;
+    }
+    let network = document.getElementById("custom-network")?.value === "testnet" ? "testnet" : "mainnet";
+    return { scheme, label: "Custom path", network, coinType: network === "testnet" ? 1 : 0, accountIndex: null, purpose: parsed.components[0]?.index ?? 0, accountPath: parsed.path, originPath: parsed.originPath, hasHardenedPrefix: parsed.hasHardened, hardening };
+  }
+  let purpose = hodlReadPurpose(mark), coinType = hodlReadCoinType(document.getElementById("network"), mark), accountIndex = hodlReadAccount(mark), parts = [
+    { index: purpose, hardened: hardening.purpose },
+    { index: coinType, hardened: hardening.coinType },
+    { index: accountIndex, hardened: hardening.account }
+  ];
+  if (scheme === "bip48") parts.push({ index: hodlReadDerivationIndex(document.getElementById("scheme-script-index"), "Script type", mark), hardened: hardening.script });
+  return {
+    scheme,
+    label: hodlDerivationSchemes[scheme].label,
+    network: hodlNetworkFromCoinType(coinType),
+    coinType,
+    accountIndex,
+    purpose,
+    accountPath: `m${parts.map((entry) => `/${hodlPathIndex(entry.index, entry.hardened)}`).join("")}`,
+    originPath: parts.map((entry) => hodlOriginPathIndex(entry.index, entry.hardened)).join("/"),
+    hasHardenedPrefix: parts.some((entry) => entry.hardened),
+    hardening
+  };
+}
+function Ao(e, t, r = 0, hardening = hodlDefaultHardening()) {
+  return `m/${hodlPathIndex(e.purpose, hardening.purpose)}/${hodlPathIndex(Rs(t), hardening.coinType)}/${hodlPathIndex(r, hardening.account)}`;
 }
 function Us(e) {
   return (e >>> 0).toString(16).padStart(8, "0");
@@ -224,15 +364,15 @@ function pf(e, t, r) {
     }
   }
 }
-function hodlDerivedAddressRow(node, accountPath, script, network, role, index) {
-  let chain = role === "receive" ? 0 : 1, child = node.derive(`m/${chain}/${index}`), publicKey = child.publicKey;
+function hodlDerivedAddressRow(node, accountPath, script, network, role, index, addressHardened = false, branchHardened = false) {
+  let chain = Number.isSafeInteger(role) ? role : role === "receive" ? 0 : 1, branchStep = hodlPathIndex(chain, branchHardened), indexStep = hodlPathIndex(index, addressHardened), child = node.derive(`m/${branchStep}/${indexStep}`), publicKey = child.publicKey;
   if (!publicKey) throw new Error("Missing public key");
   let privateKey = child.privateKey;
-  return { index, role, path: `${accountPath}/${chain}/${index}`, address: pf(script, publicKey, network), wif: privateKey ? rn(privateKey, true, network) : null, pubkey: M.encode(publicKey), privHex: privateKey ? M.encode(privateKey) : null };
+  return { index, role: hodlAddressBranchRole(chain), branch: chain, branchHardened, path: `${accountPath}/${branchStep}/${indexStep}`, address: pf(script, publicKey, network), wif: privateKey ? rn(privateKey, true, network) : null, pubkey: M.encode(publicKey), privHex: privateKey ? M.encode(privateKey) : null };
 }
-function nn(e, t, r, n, o, i, startIndex = 0) {
+function nn(e, t, r, n, o, i, startIndex = 0, addressHardened = false, branchHardened = false) {
   let rows = [];
-  for (let index = startIndex; index < startIndex + o; index++) rows.push(hodlDerivedAddressRow(e, t, r, n, i, index));
+  for (let index = startIndex; index < startIndex + o; index++) rows.push(hodlDerivedAddressRow(e, t, r, n, i, index, addressHardened, branchHardened));
   return rows;
 }
 var gf = "0123456789()[],'/*abcdefgh@:$%{}IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~ijklmnopqrstuvwxyzABCDEFGH`JKLMNOPQRSTUVWXYZ", yf = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
@@ -407,19 +547,27 @@ ec.innerHTML = `
          is online and possibly connected to the internet. Do not enter wallet
          secrets here; disconnect from all networks (Wi-Fi and Ethernet) and use
          this file on an air-gapped computer." -->
-    <section class="card">
-      <div class="kicker">Run Offline \xB7 Bring your own entropy</div>
-      <h1>Hold or receive bitcoin without a signing device.</h1>
-      <ul class="pitch-list muted">
-        <li>Save this air-gapped bitcoin calculator to a removable drive and open it on a computer that never goes online.</li>
-        <li>Turn dice rolls or a seed you already have into receive addresses.</li>
-        <li>Export an xpub and load into Bitcoin Core or any watch-only wallet, and get paid.</li>
-        <li>Keep your private keys offline.</li>
-      </ul>
-    </section>
-    <div class="row no-print segmented-control" id="workspace" role="group" aria-label="Workspace"></div>
+    <div class="workspace-shell">
+      <button class="workspace-menu-toggle no-print" id="workspace-menu-toggle" type="button" aria-controls="workspace-nav" aria-expanded="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>Tools</span><span class="workspace-menu-current" id="workspace-menu-current">Key Derivation</span></button>
+      <div class="workspace-backdrop no-print" id="workspace-backdrop" hidden></div>
+      <nav class="workspace-nav no-print" id="workspace-nav" aria-label="Tools">
+        <div class="workspace-nav-head"><span class="workspace-nav-title">Tools</span><button class="workspace-menu-close" id="workspace-menu-close" type="button" aria-label="Close tools menu"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+        <div id="workspace" role="group" aria-label="Tool"></div>
+      </nav>
+      <div class="workspace-content">
+        <section class="workspace-intro">
+          <div class="kicker">Run Offline \xB7 Bring your own entropy</div>
+          <h1>Hold or receive bitcoin without a signing device.</h1>
+          <ul class="pitch-list muted">
+            <li>Save this air-gapped bitcoin calculator to a removable drive and open it on a computer that never goes online.</li>
+            <li>Turn dice rolls or a seed you already have into receive addresses.</li>
+            <li>Export an xpub and load into Bitcoin Core or any watch-only wallet, and get paid.</li>
+            <li>Keep your private keys offline.</li>
+          </ul>
+        </section>
+        <div class="workspace-tools">
+    <div class="workspace-tool-heading no-print" data-workspace-heading="calc"><h2>Key Derivation</h2></div>
     <section class="key-manager no-print" id="key-manager">
-      <div class="key-manager-head"><h2>Keys</h2></div>
       <div class="key-tab-strip"><div class="key-tabs" id="key-tabs" role="tablist" aria-label="Keys"></div><div class="add-item-control"><button class="add-key" id="add-key" type="button" aria-label="Add key" aria-describedby="add-key-tooltip">+</button><span class="add-item-tooltip" id="add-key-tooltip" role="tooltip">Add another key</span></div></div>
     </section>
     <section class="card no-print" id="calc-card" role="tabpanel" hidden>
@@ -462,41 +610,70 @@ ec.innerHTML = `
       <div class="passphrase-keyboard-host" id="passphrase-keyboard-host" hidden></div>
       <div class="key-settings" id="key-settings">
         <div class="key-settings-row">
+          <label class="field" id="derivation-scheme-field">Derivation scheme
+            <select id="derivation-scheme"><option value="bip44">BIP44 · Legacy</option><option value="bip49">BIP49 · Nested SegWit</option><option value="bip84" selected>BIP84 · Native SegWit</option><option value="bip86">BIP86 · Taproot</option><option value="bip48">BIP48 · Multisig</option><option value="custom">Custom path</option></select>
+          </label>
           <label class="field" id="script-type-field">Script type
             <select id="script-type"><option value="bip44">Legacy</option><option value="bip49">Nested SegWit</option><option value="bip84" selected>Native SegWit</option><option value="bip86">Taproot</option></select>
           </label>
-          <label class="field" id="purpose-field">Purpose
-            <input id="purpose" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="84" aria-describedby="purpose-help">
+        </div>
+        <div class="key-settings-row" id="purpose-network-settings">
+          <div class="field" id="purpose-field"><label for="purpose">Purpose</label>
+            <div class="derivation-index-control"><span class="derivation-index-value"><input id="purpose" type="text" inputmode="numeric" value="84" aria-describedby="purpose-help"><span class="derivation-index-prime" aria-hidden="true">'</span></span><label class="derivation-harden"><input id="purpose-harden" type="checkbox" checked><span>Harden</span></label></div>
             <span class="field-note" id="purpose-help">Purpose index \xB7 Hardened \xB7 0 to 2,147,483,647</span>
-          </label>
+          </div>
+          <div class="field network-field"><label for="network">Network</label>
+            <div class="derivation-index-control"><span class="derivation-index-value"><input id="network" type="text" inputmode="numeric" value="0" aria-describedby="network-help"><span class="derivation-index-prime" aria-hidden="true">'</span></span><label class="derivation-harden"><input id="network-harden" type="checkbox" checked><span>Harden</span></label></div>
+            <span class="field-note" id="network-help">Coin type index \xB7 Mainnet \xB7 Hardened \xB7 0 to 2,147,483,647</span>
+          </div>
         </div>
         <div class="key-settings-row" id="account-address-settings">
-          <label class="field network-field">Network
-            <input id="network" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0" aria-describedby="network-help">
-            <span class="field-note" id="network-help">Coin type index \xB7 Mainnet \xB7 Hardened \xB7 0 to 2,147,483,647</span>
-          </label>
-          <label class="field" id="account-field">Account
-            <input id="account" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0" aria-describedby="account-help">
+          <div class="field" id="account-field"><label for="account">Account</label>
+            <div class="derivation-index-control"><span class="derivation-index-value"><input id="account" type="text" inputmode="numeric" value="0" aria-describedby="account-help"><span class="derivation-index-prime" aria-hidden="true">'</span></span><label class="derivation-harden"><input id="account-harden" type="checkbox" checked><span>Harden</span></label></div>
             <span class="field-note" id="account-help">Account index \xB7 Hardened \xB7 0 to 2,147,483,647</span>
+          </div>
+          <div class="field" id="scheme-script-index-field" hidden><label for="scheme-script-index">Script type</label>
+            <div class="derivation-index-control"><span class="derivation-index-value"><input id="scheme-script-index" type="text" inputmode="numeric" value="2" aria-describedby="scheme-script-index-help"><span class="derivation-index-prime" aria-hidden="true">'</span></span><label class="derivation-harden"><input id="scheme-script-index-harden" type="checkbox" checked><span>Harden</span></label></div>
+            <span class="field-note" id="scheme-script-index-help">BIP48 script type index \xB7 1 is Nested SegWit \xB7 2 is Native SegWit \xB7 Hardened</span>
+          </div>
+        </div>
+        <div class="key-settings-row custom-derivation-settings" id="custom-derivation-settings" hidden>
+          <label class="field">Custom account path
+            <input id="custom-derivation-path" type="text" value="m/84'/0'/0'" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="custom-derivation-path-help">
+            <span class="field-note" id="custom-derivation-path-help">Arbitrary BIP32 path through the account node \xB7 address branch and index are appended below</span>
+          </label>
+          <label class="field">Bitcoin network
+            <select id="custom-network"><option value="mainnet" selected>Mainnet</option><option value="testnet">Testnet</option></select>
+            <span class="field-note">Controls address encoding only \xB7 the custom path is used exactly as entered</span>
+          </label>
+        </div>
+        <div class="key-settings-row address-branch-settings" id="address-branch-settings">
+          <div class="field"><label for="branch-start" id="branch-start-label">Starting change / branch index</label>
+            <div class="derivation-index-control"><span class="derivation-index-value"><input id="branch-start" type="text" inputmode="numeric" value="0" aria-describedby="branch-start-help"><span class="derivation-index-prime" aria-hidden="true">'</span></span><label class="derivation-harden"><input id="branch-start-harden" type="checkbox"><span>Harden</span></label></div>
+            <span class="field-note" id="branch-start-help">First address branch to derive · 0 is Receive · 1 is Change · Unhardened · 0 to 2,147,483,647</span>
+          </div>
+          <label class="field">Address branch range
+            <input id="branch-range" type="number" min="1" max="2" step="1" inputmode="numeric" value="2" aria-describedby="branch-range-help">
+            <span class="field-note" id="branch-range-help">Derives Receive and Change branches · Max 2</span>
           </label>
         </div>
         <div class="key-settings-row address-range-settings" id="address-range-settings">
-          <label class="field">Starting address index
-            <input id="address-start" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0" aria-describedby="address-start-help">
-            <span class="field-note" id="address-start-help">First receive and change index to derive.</span>
-          </label>
+          <div class="field"><label for="address-start" id="address-start-label">Starting address index</label>
+            <div class="derivation-index-control"><span class="derivation-index-value"><input id="address-start" type="text" inputmode="numeric" value="0" aria-describedby="address-start-help"><span class="derivation-index-prime" aria-hidden="true">'</span></span><label class="derivation-harden"><input id="address-start-harden" type="checkbox"><span>Harden</span></label></div>
+            <span class="field-note" id="address-start-help">First receive and change index to derive \xB7 Unhardened \xB7 0 to 2,147,483,647</span>
+          </div>
           <label class="field">Address range
             <input id="address-range" type="number" min="1" max="10000" step="1" inputmode="numeric" value="5" aria-describedby="address-range-help">
-            <span class="field-note" id="address-range-help">Derives 5 receive and 5 change addresses.</span>
+            <span class="field-note" id="address-range-help">Derives 5 receive and 5 change addresses · Max 10,000</span>
           </label>
         </div>
       </div>
       <section class="derivation-path-preview" id="derivation-path-preview" aria-labelledby="derivation-path-heading" aria-live="polite">
         <div class="derivation-path-head"><p class="label" id="derivation-path-heading">Derivation paths</p><span class="derivation-path-context" id="derivation-path-context"></span></div>
         <dl class="derivation-path-list">
-          <div class="derivation-path-row"><dt>Account</dt><dd><code data-path="account"></code></dd></div>
-          <div class="derivation-path-row"><dt>Receive</dt><dd><code data-path="receive"></code></dd></div>
-          <div class="derivation-path-row"><dt>Change</dt><dd><code data-path="change"></code></dd></div>
+          <div class="derivation-path-row"><dt id="derivation-base-label">Account</dt><dd><code data-path="account"></code></dd></div>
+          <div class="derivation-path-row" data-branch-path-row="0"><dt data-branch-path-label="0">Receive</dt><dd><code data-path="receive"></code></dd></div>
+          <div class="derivation-path-row" data-branch-path-row="1"><dt data-branch-path-label="1">Change</dt><dd><code data-path="change"></code></dd></div>
         </dl>
         <p class="derivation-path-error" id="derivation-path-error" hidden></p>
       </section>
@@ -550,6 +727,7 @@ ec.innerHTML = `
         <p class="muted">Found passphrases remain in this page only. Memory clearing is best-effort; close the page before reconnecting the computer.</p>
       </details>
     </section>
+    <div class="workspace-tool-heading no-print" data-workspace-heading="bip85" hidden><h2>BIP-85</h2></div>
     <section class="card no-print" id="bip85-card" role="tabpanel" hidden>
       <div class="kicker">One seed. Many children.</div>
       <h2>Derive BIP-85 child entropy</h2>
@@ -604,8 +782,8 @@ ec.innerHTML = `
       <div id="bip85-out" aria-live="polite"></div>
       <p class="muted">Derived children remain in this page only. Anyone with the parent seed, passphrase, application, and index can reproduce them. Memory clearing is best-effort; close the page before reconnecting the computer.</p>
     </section>
+    <div class="workspace-tool-heading no-print" data-workspace-heading="msig" hidden><h2>Multi Signature</h2></div>
     <section class="key-manager no-print" id="msig-manager" hidden>
-      <div class="key-manager-head"><h2>Multisigs</h2></div>
       <div class="key-tab-strip"><div class="key-tabs" id="msig-tabs" role="tablist" aria-label="Multisigs"></div><div class="add-item-control"><button class="add-key" id="add-msig" type="button" aria-label="Add multisig" aria-describedby="add-msig-tooltip">+</button><span class="add-item-tooltip" id="add-msig-tooltip" role="tooltip">Add another multisig</span></div></div>
     </section>
     <section class="card no-print" id="msig-card" role="tabpanel" hidden>
@@ -643,31 +821,41 @@ ec.innerHTML = `
             <select id="msig-script-type" aria-describedby="msig-script-warning"><option value="p2sh">Legacy</option><option value="p2sh-p2wsh">Nested SegWit</option><option value="p2wsh" selected>Native SegWit</option><option value="p2tr">Taproot</option><option value="mixed" disabled data-custom-select-placeholder="true">Mixed \xB7 incompatible keys</option></select>
             <span class="field-note msig-script-warning" id="msig-script-warning" role="status" hidden></span>
           </label>
-          <label class="field">Purpose
-            <input id="msig-purpose" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="48" aria-describedby="msig-purpose-help msig-purpose-warning">
+          <div class="field"><label for="msig-purpose">Purpose</label>
+            <div class="derivation-index-control"><span class="derivation-index-value"><input id="msig-purpose" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="48" aria-describedby="msig-purpose-help msig-purpose-warning"><span class="derivation-index-prime" aria-hidden="true">'</span></span><label class="derivation-harden"><input id="msig-purpose-harden" type="checkbox" checked><span>Harden</span></label></div>
             <span class="field-note" id="msig-purpose-help">Purpose index \xB7 Hardened \xB7 0 to 2,147,483,647</span>
             <span class="field-note msig-purpose-warning" id="msig-purpose-warning" role="status" hidden></span>
-          </label>
+          </div>
         </div>
         <div class="key-settings-row">
-          <label class="field">Network
-            <input id="msig-network" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0" aria-describedby="msig-network-help">
+          <div class="field"><label for="msig-network">Network</label>
+            <div class="derivation-index-control"><span class="derivation-index-value"><input id="msig-network" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0" aria-describedby="msig-network-help"><span class="derivation-index-prime" aria-hidden="true">'</span></span><label class="derivation-harden"><input id="msig-network-harden" type="checkbox" checked><span>Harden</span></label></div>
             <span class="field-note" id="msig-network-help">Coin type index \xB7 Mainnet \xB7 Hardened \xB7 0 to 2,147,483,647</span>
-          </label>
-          <label class="field">Account
-            <input id="msig-account" type="text" value="" placeholder="Derived from keys" disabled aria-describedby="msig-account-help msig-account-warning">
+          </div>
+          <div class="field"><label for="msig-account">Account</label>
+            <div class="derivation-index-control"><span class="derivation-index-value"><input id="msig-account" type="text" value="" placeholder="Derived from keys" disabled aria-describedby="msig-account-help msig-account-warning"><span class="derivation-index-prime" aria-hidden="true">'</span></span><label class="derivation-harden"><input id="msig-account-harden" type="checkbox" checked><span>Harden</span></label></div>
             <span class="field-note" id="msig-account-help">Account index \xB7 Hardened \xB7 Derived from co-signer key origins.</span>
             <span class="field-note msig-account-warning" id="msig-account-warning" role="status" hidden></span>
+          </div>
+        </div>
+        <div class="key-settings-row address-branch-settings">
+          <div class="field"><label for="msig-branch-start">Starting address branch index</label>
+            <div class="derivation-index-control"><span class="derivation-index-value"><input id="msig-branch-start" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0" aria-describedby="msig-branch-start-help"><span class="derivation-index-prime" aria-hidden="true">'</span></span><label class="derivation-harden"><input id="msig-branch-start-harden" type="checkbox"><span>Harden</span></label></div>
+            <span class="field-note" id="msig-branch-start-help">First address branch to derive · 0 is Receive · 1 is Change · Unhardened · 0 to 2,147,483,647</span>
+          </div>
+          <label class="field">Address branch range
+            <input id="msig-branch-range" type="number" min="1" max="2" step="1" inputmode="numeric" value="2" aria-describedby="msig-branch-range-help">
+            <span class="field-note" id="msig-branch-range-help">Derives Receive and Change branches · Max 2</span>
           </label>
         </div>
         <div class="key-settings-row address-range-settings">
-          <label class="field">Starting address index
-            <input id="msig-address-start" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0" aria-describedby="msig-address-start-help">
-            <span class="field-note" id="msig-address-start-help">First receive and change index to derive.</span>
-          </label>
+          <div class="field"><label for="msig-address-start">Starting address index</label>
+            <div class="derivation-index-control"><span class="derivation-index-value"><input id="msig-address-start" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0" aria-describedby="msig-address-start-help"><span class="derivation-index-prime" aria-hidden="true">'</span></span><label class="derivation-harden"><input id="msig-address-start-harden" type="checkbox"><span>Harden</span></label></div>
+            <span class="field-note" id="msig-address-start-help">First receive and change index to derive \xB7 Unhardened \xB7 0 to 2,147,483,647</span>
+          </div>
           <label class="field">Address range
             <input id="msig-address-range" type="number" min="1" max="10000" step="1" inputmode="numeric" value="5" aria-describedby="msig-address-range-help">
-            <span class="field-note" id="msig-address-range-help">Derives 5 receive and 5 change addresses.</span>
+            <span class="field-note" id="msig-address-range-help">Derives 5 receive and 5 change addresses · Max 10,000</span>
           </label>
         </div>
         <details class="msig-advanced" id="msig-advanced">
@@ -689,15 +877,86 @@ ec.innerHTML = `
       </div>
       <p class="err" id="msig-error"></p>
     </section>
+    <div class="workspace-tool-heading no-print" data-workspace-heading="sp" hidden><h2>Silent Payments</h2></div>
+    <section class="card no-print" id="sp-card" role="tabpanel" hidden>
+      <div class="kicker">BIP-352 · reusable address, unique outputs</div>
+      <p class="muted psbt-intro">A calculator, not a chain scanner. Derive a reusable <code>sp1q…</code> address from your seed, compute the unique taproot output a sender must pay, or check pasted outputs against your scan key. Nothing here talks to the network.</p>
+      <div class="row no-print segmented-control" id="sp-modes" role="group" aria-label="Silent payment mode">
+        <button class="tab active" type="button" data-sp-mode="receive" aria-pressed="true">Receive</button>
+        <button class="tab" type="button" data-sp-mode="send" aria-pressed="false">Send</button>
+        <button class="tab" type="button" data-sp-mode="verify" aria-pressed="false">Verify</button>
+      </div>
+      <div class="psbt-grid">
+        <label class="field">Session key (BIP39 seed phrase or root xprv/tprv)
+          <textarea id="sp-key" placeholder="Leave blank and use the active key, or paste a seed / root xprv" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+        </label>
+        <div>
+          <label class="field">Optional BIP39 passphrase
+            <input id="sp-pass" autocomplete="off" placeholder="Enter a BIP39 passphrase, or leave blank for none">
+          </label>
+          <label class="field">Address network
+            <select id="sp-network"><option value="mainnet" selected>Bitcoin mainnet</option><option value="testnet">Testnet (practice)</option></select>
+          </label>
+          <label class="field">Account
+            <input id="sp-account" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0">
+          </label>
+        </div>
+      </div>
+      <div class="row psbt-actions">
+        <button class="btn secondary" id="sp-use-calc" type="button">Use active key this session</button>
+        <button class="btn secondary" id="sp-wipe" type="button">End session / clear fields</button>
+      </div>
+      <p class="muted" id="sp-session" aria-live="polite">No session key. Receive and verify need a seed or root xprv.</p>
+      <div id="sp-receive">
+        <label class="field">Label <code>m</code>
+          <input id="sp-label" type="number" min="0" max="4294967295" step="1" inputmode="numeric" placeholder="blank = unlabeled · 0 = change (do not hand out)">
+          <span class="field-note">Unlabeled is the reusable address you publish. <code>m = 0</code> is reserved for change. <code>m ≥ 1</code> is an extra labeled code from the same scan key.</span>
+        </label>
+        <div class="row psbt-actions">
+          <button class="btn primary" id="sp-derive" type="button">Derive silent payment address</button>
+        </div>
+      </div>
+      <div id="sp-send" hidden>
+        <label class="field">Recipients (one <code>sp1q…</code> / <code>tsp1q…</code> per line; optional count)
+          <textarea id="sp-recipients" placeholder="sp1qqgste7k9hx0q…&#10;sp1qqgste7k9hx0q… 2" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+        </label>
+        <label class="field">Inputs (BIP-352 vin JSON)
+          <textarea id="sp-send-vins" placeholder='[{"txid":"\u2026","vout":0,"scriptSig":"\u2026","txinwitness":"","prevout":{"scriptPubKey":{"hex":"\u2026"}},"private_key":"\u2026"}]' spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+          <span class="field-note">Same shape as the published BIP-352 send vectors. Each eligible input needs its private key. P2TR / P2WPKH / P2SH-P2WPKH / P2PKH only.</span>
+        </label>
+        <div class="row psbt-actions">
+          <button class="btn primary" id="sp-send-go" type="button">Compute taproot outputs</button>
+        </div>
+      </div>
+      <div id="sp-verify" hidden>
+        <label class="field">Inputs (BIP-352 vin JSON, private keys optional)
+          <textarea id="sp-verify-vins" placeholder='[{"txid":"\u2026","vout":0,"scriptSig":"\u2026","txinwitness":"","prevout":{"scriptPubKey":{"hex":"\u2026"}}}]' spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+        </label>
+        <label class="field">Taproot output keys (32-byte x-only hex, one per line)
+          <textarea id="sp-verify-outputs" placeholder="3e9fce73d4e77a4809908e3c3a2e54ee147b9312dc5044a193d1fc85de46e3c1" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+        </label>
+        <label class="field">Labels to scan
+          <input id="sp-verify-labels" placeholder="0, 1, 2" value="0">
+          <span class="field-note"><code>m = 0</code> is change and should stay in this list. Add any labeled codes you handed out.</span>
+        </label>
+        <div class="row psbt-actions">
+          <button class="btn primary" id="sp-verify-go" type="button">Scan pasted outputs</button>
+        </div>
+      </div>
+      <p class="err" id="sp-error" role="alert"></p>
+      <div id="sp-out" aria-live="polite"></div>
+      <p class="muted">Session keys remain in this page only and are never intentionally stored or sent. Memory clearing is best-effort because browsers may retain internal copies; close the page before reconnecting the computer.</p>
+    </section>
+    <div class="workspace-tool-heading no-print" data-workspace-heading="psbt" hidden><h2>PSBT / Nonce</h2></div>
     <section class="card no-print" id="psbt-card" role="tabpanel" hidden>
       <div class="kicker">Inspect first. Sign elsewhere.</div>
-      <h2>Read a PSBT. Check its ECDSA nonces.</h2>
-      <p class="muted psbt-intro">Inspecting a PSBT v0 does not require a private key. EntropyLab can show outputs, PSBT-provided input amounts and fees, signatures, and repeated ECDSA nonce values. Optional Jade anti-exfil transcripts (host nonce \u03C1 and signer opening R) are checked without a key. Loading a matching key additionally checks whether supported signatures match plain RFC 6979 or Bitcoin Core-style low-r grinding; a mismatch alone is not evidence of a compromised signer.</p>
-      <label class="field">PSBT v0 (base64 or hex)
-        <textarea id="psbt-text" placeholder="cHNidP8B..." spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      <h2>Read a PSBT or a signed transaction.</h2>
+      <p class="muted psbt-intro">Inspecting a PSBT v0 or a raw Bitcoin transaction does not require a private key. EntropyLab can show outputs, PSBT-provided input amounts and fees, signatures, and repeated ECDSA nonce values. Optional Jade anti-exfil transcripts (host nonce \u03C1 and signer opening R) are checked without a key. Finalized taproot witnesses and tap-leaf scripts are scanned for inscription envelopes (OP_FALSE OP_IF "ord"); this does not number sats or fetch content from the chain. Loading a matching key additionally labels which outputs belong to this wallet (change vs receive vs not yours) and checks whether supported signatures match plain RFC 6979 or Bitcoin Core-style low-r grinding; a mismatch alone is not evidence of a compromised signer.</p>
+      <label class="field">PSBT v0 or raw transaction (base64 or hex)
+        <textarea id="psbt-text" placeholder="cHNidP8B\u2026 or 020000000001\u2026" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
       </label>
       <div class="psbt-grid">
-        <label class="field">Optional session key (BIP39 seed phrase, WIF, or 64-character hex)
+        <label class="field">Optional session key (BIP39 seed phrase, root xprv/tprv, WIF, or 64-character hex)
           <textarea id="psbt-key" placeholder="Leave blank for inspect-only mode" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
         </label>
         <div>
@@ -714,7 +973,7 @@ ec.innerHTML = `
         <span class="field-note">USB Jade only (Green host nonce + opening). QR / sign_psbt does not run anti-exfil yet. BitBox anti-klepto is a different mix \u2014 do not paste it here.</span>
       </label>
       <div class="row psbt-actions">
-        <button class="btn primary" id="psbt-go" type="button">Inspect PSBT</button>
+        <button class="btn primary" id="psbt-go" type="button">Inspect</button>
         <button class="btn secondary" id="psbt-use-calc" type="button">Use active key this session</button>
         <button class="btn secondary" id="psbt-wipe" type="button">End session / clear fields</button>
       </div>
@@ -723,20 +982,26 @@ ec.innerHTML = `
       <div id="psbt-out" aria-live="polite"></div>
       <p class="muted">Session keys remain in this page only and are never intentionally stored or sent. Memory clearing is best-effort because browsers may retain internal copies; close the page before reconnecting the computer.</p>
     </section>
-    <div id="out"></div>
-    <section class="card muted sources">
+          <div id="out"></div>
+        </div>
+        <section class="card muted sources">
       <h3 class="sources-heading">Sources</h3>
       <p>Ian Coleman BIP39: <a href="https://github.com/iancoleman/bip39" target="_blank" rel="noopener noreferrer">github.com/iancoleman/bip39</a> \u2014 pull <code>bip39-standalone.html</code> from Releases, or <code>src/js/index.js</code>, <code>entropy.js</code>, <code>jsbip39.js</code>, <code>wordlist_english.js</code>.</p>
+      <p>Electrum Seed Version System: <a href="https://docs.electrum.org/en/latest/seedphrase.html" target="_blank" rel="noopener noreferrer">docs.electrum.org/en/latest/seedphrase.html</a> \u2014 HMAC-SHA512 \u201CSeed version\u201D prefix and PBKDF2 salt \u201Celectrum\u201D, not BIP39.</p>
       <p>bitaddress.org: <a href="https://github.com/pointbiz/bitaddress.org" target="_blank" rel="noopener noreferrer">github.com/pointbiz/bitaddress.org</a> \u2014 pull <code>bitaddress.org.html</code>, or <code>src/ninja.key.js</code>, <code>ninja.detailwallet.js</code>, <code>ninja.paperwallet.js</code>, <code>bitcoinjs-lib.eckey.js</code>.</p>
       <p>BitBox02 diceware: <a href="https://blog.bitbox.swiss/en/roll-the-dice-generate-your-own-seed/" target="_blank" rel="noopener noreferrer">roll-the-dice-generate-your-own-seed</a> \u2014 lookup table is the BIP39 English list in order.</p>
       <p>D++ D8 &amp; D16 method: <a href="https://thesimplestbitcoinbook.net/wp-content/uploads/2023/09/Roll-Your-Own-Seed-Phrase-PDF.pdf" target="_blank" rel="noopener noreferrer">Roll Your Own Bitcoin Seed Phrase</a> \u2014 the published 24-word workflow uses one D8 labeled 1\u20138 and two hexadecimal D16 dice labeled 0\u2013F per word, then a final D8.</p>
       <p>Jade anti-exfil (sign-to-contract): <a href="https://blog.blockstream.com/anti-exfil-stopping-key-exfiltration/" target="_blank" rel="noopener noreferrer">Anti-Exfil: Stopping Key Exfiltration</a> \u2014 secp256k1-zkp <code>ecdsa_s2c</code> / <code>anti_exfil_host_verify</code>.</p>
       <p>BIP-85 deterministic entropy: <a href="https://github.com/bitcoin/bips/blob/master/bip-0085.mediawiki" target="_blank" rel="noopener noreferrer">bip-0085.mediawiki</a> \u2014 HMAC-SHA512 of a fully hardened child; English BIP-39 / WIF / XPRV / HEX / password applications match COLDCARD.</p>
-    </section>
+      <p>BIP-352 Silent Payments: <a href="https://github.com/bitcoin/bips/blob/master/bip-0352.mediawiki" target="_blank" rel="noopener noreferrer">bips/bip-0352</a> \u2014 reusable <code>sp1q\u2026</code> addresses and unique taproot outputs. Descriptors: <a href="https://github.com/bitcoin/bips/blob/master/bip-0392.mediawiki" target="_blank" rel="noopener noreferrer">BIP-392</a>.</p>
+      <p>Inscription envelopes: <a href="https://docs.ordinals.com/inscriptions.html" target="_blank" rel="noopener noreferrer">docs.ordinals.com/inscriptions</a> \u2014 <code>OP_FALSE OP_IF "ord"</code> parser only. This tool does not create inscriptions or number sats.</p>
+        </section>
+      </div>
+    </div>
   </div>
 `;
 if (/^(www\.)?entropylab\.online$/i.test(location.hostname)) document.getElementById("online-warning")?.removeAttribute("hidden");
-var hodlKeyModes = ["dice", "cards", "hex", "seed", "key"], hodlCardRanks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K"], hodlDirectCardRanks = ["A", "2", "3", "4", "5", "6", "7", "8"], hodlCardSuits = [{ code: "S", symbol: "\u2660", label: "Spades", red: false }, { code: "H", symbol: "\u2665", label: "Hearts", red: true }, { code: "C", symbol: "\u2663", label: "Clubs", red: false }, { code: "D", symbol: "\u2666", label: "Diamonds", red: true }], hodlCardSuit = "", hodlCardRank = "", hodlCardMethod = "hashed", hodlSeedMethod = "words", hodlSeedZeroIndexed = false, hodlCardColemanSymbols = false, Ne = "dice", ge = "coldcard", Pt = 24, hodlEntropyFormat = "hex", hodlDiceCoinPositions = [], ft = "", re = null, Ge = false, hodlWalletDatBirthday = "genesis", Zs = W("#modes"), at = W("#form"), dr = W("#out");
+var hodlKeyModes = ["dice", "cards", "hex", "seed", "key"], hodlCardRanks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K"], hodlDirectCardRanks = ["A", "2", "3", "4", "5", "6", "7", "8"], hodlCardSuits = [{ code: "S", symbol: "\u2660", label: "Spades", red: false }, { code: "H", symbol: "\u2665", label: "Hearts", red: true }, { code: "C", symbol: "\u2663", label: "Clubs", red: false }, { code: "D", symbol: "\u2666", label: "Diamonds", red: true }], hodlCardSuit = "", hodlCardRank = "", hodlCardMethod = "hashed", hodlSeedMethod = "words", hodlSeedZeroIndexed = false, hodlCardColemanSymbols = false, hodlElectrumGenerate = false, hodlElectrumType = "100", Ne = "dice", ge = "coldcard", Pt = 24, hodlEntropyFormat = "hex", hodlDiceCoinPositions = [], ft = "", re = null, Ge = false, hodlWalletDatBirthday = "genesis", Zs = W("#modes"), at = W("#form"), dr = W("#out");
 hodlKeyModes.forEach((e) => {
   let t = document.createElement("button"), active = e === Ne;
   t.type = "button";
@@ -824,7 +1089,7 @@ function lr() {
   } else if (Ne === "seed") {
     at.innerHTML = `
       <p class="label">Your seed phrase</p>
-      <p class="muted">12 or 24 English BIP39 words. You can also paste an xprv / xpub / zpub here. If you have 23 words from BitBox diceware, paste them and pick the checksum word below.</p>
+      <p class="muted">12 or 24 English BIP39 words, or an Electrum 2.0+ native seed (auto-detected). You can also paste an xprv / xpub / zpub here. If you have 23 words from BitBox diceware, paste them and pick the checksum word below.</p>
       <textarea id="seed" placeholder="word1 word2 word3 \u2026"></textarea>
       <p class="muted" id="seed-meta"></p>
       <div id="last-words" class="row" style="margin-top:8px"></div>
@@ -975,7 +1240,9 @@ uf = function(value) {
   return { xkey: normalized, isPrivate: entry.private, network: entry.network, family: entry.family, scope: entry.scope, prefix: entry.name, version: entry.ver, node, depth, childNumber };
 };
 function hodlAccountExportFamily(definition) {
-  return definition.id === "bip49" ? "y" : definition.id === "bip84" ? "z" : "x";
+  if (definition.slip === "y" || definition.id === "bip49") return "y";
+  if (definition.slip === "z" || definition.id === "bip84") return "z";
+  return "x";
 }
 function hodlSerializeExtendedKey(value, network, family, isPrivate) {
   return value ? le(value, cr[network][family][isPrivate ? "prv" : "pub"]) : null;
@@ -1044,35 +1311,60 @@ function hodlStripDescriptorChecksum(descriptor) {
   let text = String(descriptor ?? ""), hash = text.lastIndexOf("#");
   return hash >= 0 ? text.slice(0, hash) : text;
 }
-function hodlWatchOnlyMultipathDescriptor(receiveDescriptor) {
+function hodlAddressBranchRole(branch) {
+  return branch === 0 ? "receive" : branch === 1 ? "change" : "custom";
+}
+function hodlAddressBranchLabel(branch) {
+  return branch === 0 ? "Receive" : branch === 1 ? "Change" : `Custom branch ${branch}`;
+}
+function hodlWatchOnlyMultipathDescriptor(receiveDescriptor, branches = [0, 1]) {
   let body = hodlStripDescriptorChecksum(receiveDescriptor);
   if (!body) return "";
-  if (body.includes("/<0;1>/*")) return Le(body);
-  if (!/\/0\/\*/.test(body)) return "";
-  return Le(body.replace(/\/0\/\*/g, "/<0;1>/*"));
+  let selected = [...new Set(branches)].filter(Number.isSafeInteger);
+  if (!selected.length) return "";
+  if (selected.length === 1) return Le(body);
+  let first = selected[0], pattern = new RegExp(`/${first}/\\*`, "g");
+  if (!pattern.test(body)) return "";
+  return Le(body.replace(pattern, `/<${selected.join(";")}>/*`));
 }
 function hodlDescriptorQrSvg(payload) {
   return Xs(payload, { ecc: "M", border: 4, pixelSize: 4, blackColor: "#111111", whiteColor: "#ffffff" });
 }
-function hodlWatchOnlyDescriptorExport(receiveDescriptor, changeDescriptor) {
-  let multipath = hodlWatchOnlyMultipathDescriptor(receiveDescriptor), qr = "";
+function hodlWatchOnlyDescriptorExport(receiveDescriptor, changeDescriptor, addressBranches = null) {
+  let branches = (addressBranches?.length ? addressBranches : [
+    { branch: 0, label: "Receive", publicDescriptor: receiveDescriptor },
+    { branch: 1, label: "Change", publicDescriptor: changeDescriptor }
+  ]).filter((entry) => entry.publicDescriptor), first = branches[0], multipath = first ? branches.length === 1 ? first.publicDescriptor : hodlWatchOnlyMultipathDescriptor(first.publicDescriptor, branches.map((entry) => entry.branch)) : "", qr = "";
   if (multipath) {
     try {
       if (multipath.length > 1e3) throw new Error("Descriptor too long for a static QR.");
       qr = `<div class="watch-only-qr"><div class="qr qr-descriptor" aria-label="Watch-only wallet descriptor QR code">${hodlDescriptorQrSvg(multipath)}</div><p class="muted">Import this output descriptor into Sparrow or another wallet.</p></div>`;
     } catch (error) {
-      qr = `<p class="muted">${$t(error.message || "Descriptor too long for a static QR.")} Copy the text instead, or import the receive and change descriptors separately.</p>`;
+      qr = `<p class="muted">${$t(error.message || "Descriptor too long for a static QR.")} Copy the text instead, or import the selected branch descriptors separately.</p>`;
     }
   }
-  return `${ye("Watch-only wallet descriptor", multipath || "\u2014")}${qr}<details class="wallet-advanced"><summary>Receive and change descriptors</summary>${ye("Watch-only receive descriptor", receiveDescriptor)}${ye("Watch-only change descriptor", changeDescriptor)}</details>`;
+  let details = branches.map((entry) => ye(`Watch-only ${hodlAddressBranchLabel(entry.branch).toLowerCase()} descriptor`, entry.publicDescriptor)).join("");
+  return `${ye("Watch-only wallet descriptor", multipath || "\u2014")}${qr}<details class="wallet-advanced"><summary>Address branch descriptors</summary>${details}</details>`;
 }
 function hodlAccountResult(node, definition, network, count, options = {}) {
   let rawPublic = node.publicExtendedKey, rawPrivate = node.privateKey ? node.privateExtendedKey : null, family = hodlAccountExportFamily(definition), primaryConfig = cr[network][family], genericConfig = cr[network].x;
   let genericPublic = hodlSerializeExtendedKey(rawPublic, network, "x", false), genericPrivate = hodlSerializeExtendedKey(rawPrivate, network, "x", true);
   let primaryPublic = hodlSerializeExtendedKey(rawPublic, network, family, false), primaryPrivate = hodlSerializeExtendedKey(rawPrivate, network, family, true);
-  let origin = options.originFingerprint && options.originPath ? `[${options.originFingerprint}/${options.originPath}]` : "";
-  let publicReceive = `${origin}${genericPublic}/0/*`, publicChange = `${origin}${genericPublic}/1/*`;
-  let privateReceive = genericPrivate ? `${origin}${genericPrivate}/0/*` : null, privateChange = genericPrivate ? `${origin}${genericPrivate}/1/*` : null;
+  let origin = options.originFingerprint ? options.originPath ? `[${options.originFingerprint}/${options.originPath}]` : `[${options.originFingerprint}]` : "", branchHardened = Boolean(options.branchHardened), addressHardened = Boolean(options.addressHardened), wildcard = addressHardened ? "*'" : "*", branchStart = options.branchStart ?? 0, branchRange = options.branchRange ?? 2;
+  let addressBranches = Array.from({ length: branchRange }, (_, offset) => {
+    let branch = branchStart + offset, branchStep = hodlPathIndex(branch, branchHardened), branchOrigin = options.originFingerprint ? options.originPath ? `[${options.originFingerprint}/${options.originPath}/${hodlOriginPathIndex(branch, branchHardened)}]` : `[${options.originFingerprint}/${hodlOriginPathIndex(branch, branchHardened)}]` : "", branchNode = branchHardened && node.privateKey ? node.derive(`m/${branchStep}`) : null, branchPublic = branchNode ? hodlSerializeExtendedKey(branchNode.publicExtendedKey, network, "x", false) : null;
+    let publicToken = addressHardened ? null : branchHardened ? branchPublic ? `${branchOrigin}${branchPublic}/${wildcard}` : null : `${origin}${genericPublic}/${branchStep}/${wildcard}`, privateToken = genericPrivate ? `${origin}${genericPrivate}/${branchStep}/${wildcard}` : null;
+    return {
+      branch,
+      branchHardened,
+      role: hodlAddressBranchRole(branch),
+      label: hodlAddressBranchLabel(branch),
+      publicDescriptor: publicToken ? Le(Ye(definition.script, publicToken)) : null,
+      privateDescriptor: privateToken ? Le(Ye(definition.script, privateToken)) : null,
+      rows: options.addressBranches?.find((entry) => entry.branch === branch)?.rows ?? nn(node, options.accountPath ?? "Imported account key", definition.script, network, count, branch, options.addressStart ?? 0, addressHardened, branchHardened)
+    };
+  });
+  let receiveBranch = addressBranches.find((entry) => entry.branch === 0), changeBranch = addressBranches.find((entry) => entry.branch === 1);
   let accountPath = options.accountPath ?? "Imported account key";
   return {
     def: definition,
@@ -1104,13 +1396,18 @@ function hodlAccountResult(node, definition, network, count, options = {}) {
     zprv: family === "z" ? primaryPrivate : null,
     vpub: null,
     vprv: null,
-    receiveDescriptor: Le(Ye(definition.script, publicReceive)),
-    changeDescriptor: Le(Ye(definition.script, publicChange)),
-    walletDescriptor: hodlWatchOnlyMultipathDescriptor(Le(Ye(definition.script, publicReceive))),
-    receiveDescriptorPriv: privateReceive ? Le(Ye(definition.script, privateReceive)) : null,
-    changeDescriptorPriv: privateChange ? Le(Ye(definition.script, privateChange)) : null,
-    receive: options.receive ?? nn(node, accountPath, definition.script, network, count, "receive", options.addressStart ?? 0),
-    change: options.change ?? nn(node, accountPath, definition.script, network, count, "change", options.addressStart ?? 0)
+    addressBranches,
+    branchStart,
+    branchRange,
+    receiveDescriptor: receiveBranch?.publicDescriptor ?? null,
+    changeDescriptor: changeBranch?.publicDescriptor ?? null,
+    walletDescriptor: addressBranches[0]?.publicDescriptor ? addressBranches.length === 1 ? addressBranches[0].publicDescriptor : hodlWatchOnlyMultipathDescriptor(addressBranches[0].publicDescriptor, addressBranches.map((entry) => entry.branch)) : null,
+    receiveDescriptorPriv: receiveBranch?.privateDescriptor ?? null,
+    changeDescriptorPriv: changeBranch?.privateDescriptor ?? null,
+    branchHardened,
+    addressHardened,
+    receive: receiveBranch?.rows ?? [],
+    change: changeBranch?.rows ?? []
   };
 }
 mf = function(root, definition, network, count, masterFingerprint, accountIndex = 0, addressStart = 0, coinType = Rs(network)) {
@@ -1182,10 +1479,10 @@ Po = function(value, network, count, accountIndex = 0, addressStart = 0) {
     accounts: [account]
   };
 };
-async function hodlAddressRowsWithProgress(node, accountPath, script, network, count, role, addressStart, tracker) {
+async function hodlAddressRowsWithProgress(node, accountPath, script, network, count, role, addressStart, tracker, addressHardened = false, branchHardened = false) {
   let rows = [];
   for (let index = addressStart; index < addressStart + count; index++) {
-    rows.push(hodlDerivedAddressRow(node, accountPath, script, network, role, index));
+    rows.push(hodlDerivedAddressRow(node, accountPath, script, network, role, index, addressHardened, branchHardened));
     let pause = tracker.step();
     if (pause) await pause;
   }
@@ -1193,43 +1490,121 @@ async function hodlAddressRowsWithProgress(node, accountPath, script, network, c
 }
 async function hodlAccountResultWithProgress(node, definition, network, count, options, tracker) {
   let accountPath = options.accountPath ?? "Imported account key";
-  let receive = await hodlAddressRowsWithProgress(node, accountPath, definition.script, network, count, "receive", options.addressStart ?? 0, tracker);
-  let change = await hodlAddressRowsWithProgress(node, accountPath, definition.script, network, count, "change", options.addressStart ?? 0, tracker);
-  return hodlAccountResult(node, definition, network, count, { ...options, receive, change });
+  let branchStart = options.branchStart ?? 0, branchRange = options.branchRange ?? 2, addressBranches = [];
+  for (let branch = branchStart; branch < branchStart + branchRange; branch++) {
+    addressBranches.push({ branch, rows: await hodlAddressRowsWithProgress(node, accountPath, definition.script, network, count, branch, options.addressStart ?? 0, tracker, options.addressHardened, options.branchHardened) });
+  }
+  return hodlAccountResult(node, definition, network, count, { ...options, addressBranches });
 }
-async function hodlRootWalletWithProgress(root, network, count, source, accountIndex, addressStart, tracker, purposeIndex, coinType = Rs(network)) {
+async function hodlRootWalletWithProgress(root, network, count, source, accountIndex, addressStart, tracker, purposeIndex, coinType = Rs(network), hardening = hodlDefaultHardening(), branchStart = 0, branchRange = 2, derivationPlan = null) {
   let addressCount = Math.min(Math.max(count, 1), hodlMaxAddressRange), masterFingerprint = Us(root.fingerprint), accounts = [];
-  tracker.setTotal(addressCount * To.length * 2);
+  tracker.setTotal(addressCount * To.length * branchRange);
   for (let definition of To) {
-    let derivedDefinition = { ...definition, purpose: purposeIndex }, accountPath = Ao(derivedDefinition, coinType, accountIndex), node = root.derive(accountPath), originPath = `${purposeIndex}h/${coinType}h/${accountIndex}h`;
-    accounts.push(await hodlAccountResultWithProgress(node, derivedDefinition, network, addressCount, { accountPath, accountIndex, masterFingerprint, originFingerprint: masterFingerprint, originPath, addressStart }, tracker));
+    let derivedDefinition = { ...definition, purpose: purposeIndex, purposeHardened: hardening.purpose }, accountPath = derivationPlan?.accountPath || Ao(derivedDefinition, coinType, accountIndex, hardening), node = root.derive(accountPath), originPath = derivationPlan?.originPath ?? `${hodlOriginPathIndex(purposeIndex, hardening.purpose)}/${hodlOriginPathIndex(coinType, hardening.coinType)}/${hodlOriginPathIndex(accountIndex, hardening.account)}`;
+    accounts.push(await hodlAccountResultWithProgress(node, derivedDefinition, network, addressCount, { accountPath, accountIndex, masterFingerprint, originFingerprint: masterFingerprint, originPath, addressStart, branchHardened: hardening.branch, addressHardened: hardening.address, branchStart, branchRange }, tracker));
   }
   return hodlRootWalletResult(root, network, source, accountIndex, masterFingerprint, accounts, coinType);
 }
-async function hodlMnemonicWalletWithProgress(value, passphrase, network, count, source, accountIndex, addressStart, tracker, purposeIndex, coinType = Rs(network)) {
+async function hodlMnemonicWalletWithProgress(value, passphrase, network, count, source, accountIndex, addressStart, tracker, purposeIndex, coinType = Rs(network), hardening = hodlDefaultHardening(), branchStart = 0, branchRange = 2, derivationPlan = null) {
   let validation = Mt(value);
   if (!validation.ok) throw new Error(validation.error ?? "Invalid seed phrase");
   let mnemonic = validation.words.join(" "), seed = wi(mnemonic, passphrase), root = Gt.fromMasterSeed(seed), entropyHex = source?.entropyHex ?? M.encode(Er(mnemonic, Ae)), warnings = [...source?.warnings ?? []];
   if (passphrase.length > 0) warnings.push("A passphrase is in use. The same words without this passphrase are a different wallet. Do not store the passphrase with the words.");
-  return hodlRootWalletWithProgress(root, network, count, { mnemonic, passphraseUsed: passphrase.length > 0, entropyHex, seedHex: M.encode(seed), notes: source?.notes ?? [], warnings }, accountIndex, addressStart, tracker, purposeIndex, coinType);
+  return hodlRootWalletWithProgress(root, network, count, { mnemonic, passphraseUsed: passphrase.length > 0, entropyHex, seedHex: M.encode(seed), notes: source?.notes ?? [], warnings }, accountIndex, addressStart, tracker, purposeIndex, coinType, hardening, branchStart, branchRange, derivationPlan);
 }
-async function hodlEntropyWalletWithProgress(entropy, passphrase, network, count, accountIndex, addressStart, tracker, purposeIndex, coinType = Rs(network)) {
-  return hodlMnemonicWalletWithProgress(_n(entropy.bytes), passphrase, network, count, { entropyHex: entropy.hex, notes: entropy.notes, warnings: entropy.warnings }, accountIndex, addressStart, tracker, purposeIndex, coinType);
+function hodlClassifyMnemonic(value) {
+  let words = Rn(value).split(" ").filter(Boolean);
+  if (!words.length) return { ok: false, words, unknown: [], error: "Type or paste your seed phrase." };
+  let unknown = words.map((word, index) => ({ index, word })).filter(({ word }) => !Ae.includes(word));
+  if (unknown.length) return { ok: false, words, unknown, error: `Word ${unknown[0].index + 1} (\u201C${unknown[0].word}\u201D) is not on the BIP39 English list.` };
+  let phrase = words.join(" "), electrum = detectElectrumSeed(phrase), bip39 = Pn(phrase, Ae);
+  if (electrum) return { ok: true, words, unknown: [], electrum, bip39, format: "electrum" };
+  if (bip39 && [12, 15, 18, 21, 24].includes(words.length)) return { ok: true, words, unknown: [], electrum: null, bip39: true, format: "bip39" };
+  return {
+    ok: false,
+    words,
+    unknown: [],
+    electrum: null,
+    bip39: false,
+    error: [12, 15, 18, 21, 24].includes(words.length)
+      ? "Not an Electrum seed (HMAC version prefix mismatch) and the BIP39 checksum does not match. One of the words is wrong, or this is not a BIP39 or Electrum phrase."
+      : `A seed phrase is 12, 15, 18, 21, or 24 words. You entered ${words.length}.`
+  };
 }
-async function hodlImportedWalletWithProgress(value, network, count, accountIndex, addressStart, tracker, purposeIndex, coinType = Rs(network)) {
+var hodlElectrumGrindCache = new Map();
+function hodlGrindElectrumFromEntropy(bytes, prefix) {
+  let key = `${prefix}:${M.encode(bytes)}`, cached = hodlElectrumGrindCache.get(key);
+  if (cached) return cached;
+  let ground = grindElectrumSeed(entropyBytesToInt(bytes), prefix, { wordlist: Ae, skipBip39: true });
+  if (hodlElectrumGrindCache.size >= 8) hodlElectrumGrindCache.clear();
+  hodlElectrumGrindCache.set(key, ground);
+  return ground;
+}
+async function hodlElectrumWalletWithProgress(phrase, passphrase, network, count, source, addressStart, tracker) {
+  let classified = source?.classified ?? hodlClassifyMnemonic(phrase);
+  if (!classified.ok || classified.format !== "electrum") throw new Error(classified.error ?? "Not an Electrum seed.");
+  let detected = classified.electrum, definition = electrumAccountDefinition(detected), seed = electrumMnemonicToSeed(detected.normalized, passphrase), root = Gt.fromMasterSeed(seed);
+  let accountPath = detected.accountPath || "m", originPath = detected.originPath ?? "";
+  let accountNode = accountPath === "m" ? root : root.derive(accountPath);
+  let addressCount = Math.min(Math.max(count, 1), hodlMaxAddressRange), masterFingerprint = Us(root.fingerprint);
+  tracker.setTotal(addressCount * 2);
+  let account = await hodlAccountResultWithProgress(accountNode, definition, network, addressCount, {
+    accountPath,
+    accountIndex: 0,
+    masterFingerprint,
+    originFingerprint: masterFingerprint,
+    originPath,
+    addressStart: addressStart ?? 0
+  }, tracker);
+  let warnings = [...source?.warnings ?? []];
+  warnings.push("This phrase will be rejected or produce a different wallet in BIP39-only software.");
+  if (detected.twoFactor) warnings.push("Electrum 2FA (TrustedCoin) cosigner is missing. Addresses below are the user key alone and will not match the 2FA wallet.");
+  if (classified.bip39) warnings.push("These words also pass a BIP39 checksum. EntropyLab restored them as Electrum, not BIP39.");
+  if (passphrase.length > 0) warnings.push("An Electrum passphrase is in use. The same words without this passphrase are a different wallet. Do not store the passphrase with the words.");
+  let notes = [...source?.notes ?? [], `Format: Electrum Seed Version System \xB7 version ${detected.prefix} (${detected.title}) \xB7 ${detected.wordCount} words.`];
+  if (source?.grindNonce) notes.push(`Ground an Electrum-native ${detected.label} seed in ${source.grindNonce} tries from user entropy. Will NOT restore as BIP39.`);
+  let result = hodlRootWalletResult(root, network, {
+    mnemonic: detected.normalized,
+    passphraseUsed: passphrase.length > 0,
+    entropyHex: source?.entropyHex ?? null,
+    seedHex: M.encode(seed),
+    notes,
+    warnings
+  }, 0, masterFingerprint, [account]);
+  result.seedFormat = "electrum";
+  result.electrum = { prefix: detected.prefix, type: detected.id, title: detected.title, twoFactor: detected.twoFactor, wordCount: detected.wordCount };
+  result.multisigCosignerExports = [];
+  return result;
+}
+async function hodlElectrumWalletFromEntropy(entropy, passphrase, network, count, addressStart, tracker, prefix) {
+  let ground = hodlGrindElectrumFromEntropy(entropy.bytes, prefix);
+  return hodlElectrumWalletWithProgress(ground.phrase, passphrase, network, count, {
+    entropyHex: entropy.hex,
+    notes: entropy.notes,
+    warnings: entropy.warnings,
+    grindNonce: ground.nonce,
+    classified: { ok: true, words: ground.phrase.split(" "), electrum: ground.detected, bip39: false, format: "electrum" }
+  }, addressStart, tracker);
+}
+async function hodlEntropyWalletWithProgress(entropy, passphrase, network, count, accountIndex, addressStart, tracker, purposeIndex, coinType = Rs(network), hardening = hodlDefaultHardening(), branchStart = 0, branchRange = 2, derivationPlan = null) {
+  if (hodlElectrumGenerateEnabled()) return hodlElectrumWalletFromEntropy(entropy, passphrase, network, count, addressStart, tracker, hodlElectrumType);
+  return hodlMnemonicWalletWithProgress(_n(entropy.bytes), passphrase, network, count, { entropyHex: entropy.hex, notes: entropy.notes, warnings: entropy.warnings }, accountIndex, addressStart, tracker, purposeIndex, coinType, hardening, branchStart, branchRange, derivationPlan);
+}
+async function hodlImportedWalletWithProgress(value, network, count, accountIndex, addressStart, tracker, purposeIndex, coinType = Rs(network), hardening = hodlDefaultHardening(), branchStart = 0, branchRange = 2, derivationPlan = null) {
   let importedValue = String(value ?? "").trim(), parsed = uf(importedValue);
   if (parsed.scope !== "singlesig") throw new Error(`${parsed.prefix} is a multisig extended key. Use it in Multi Signature, not Key Derivation.`);
   if (parsed.network !== network) throw new Error(`This ${parsed.prefix} belongs to Bitcoin ${parsed.network}. Change Network to ${parsed.network} before deriving it.`);
   let node = parsed.node, notes = [parsed.isPrivate ? "Imported an extended private key. Addresses and WIF keys are derived from it." : "Imported an extended public key. This is watch-only: it can derive addresses but cannot spend."];
   if (node.depth === 0) {
-    if (!parsed.isPrivate) throw new Error("A root extended public key cannot derive hardened account paths. Import an account-level extended public key, or use the root xprv/tprv offline.");
+    if (!parsed.isPrivate && (derivationPlan ? derivationPlan.hasHardenedPrefix || hardening.branch || hardening.address : Object.values(hardening).some(Boolean))) throw new Error("A root extended public key cannot derive the selected hardened path. Turn every Harden option off, import an account-level public key, or use the root xprv/tprv offline.");
     if (parsed.family !== "x") throw new Error("A BIP32 root private key must use the generic xprv/tprv prefix.");
-    return hodlRootWalletWithProgress(node, network, count, { mnemonic: null, passphraseUsed: false, entropyHex: null, seedHex: null, notes, warnings: [] }, accountIndex, addressStart, tracker, purposeIndex, coinType);
+    return hodlRootWalletWithProgress(node, network, count, { mnemonic: null, passphraseUsed: false, entropyHex: null, seedHex: null, notes, warnings: [] }, accountIndex, addressStart, tracker, purposeIndex, coinType, hardening, branchStart, branchRange, derivationPlan);
   }
   if (node.depth !== 3) throw new Error(`This extended key is depth ${node.depth}. Key Derivation accepts a BIP32 root private key (depth 0) or an account-level extended key (depth 3).`);
+  if ((hardening.branch || hardening.address) && !parsed.isPrivate) throw new Error(`Hardened ${hardening.branch ? "address branches" : "address indexes"} cannot be derived from an account extended public key. Turn off Harden or import the matching extended private key offline.`);
   let definition = hodlImportedScriptDefinition(parsed), addressCount = Math.min(Math.max(count, 1), hodlMaxAddressRange), parentFingerprint = Us(node.parentFingerprint), nodeFingerprint = Us(node.fingerprint);
-  tracker.setTotal(addressCount * 2);
-  let account = await hodlAccountResultWithProgress(node, definition, network, addressCount, { accountPath: "Imported account key", accountIndex: null, imported: true, parentFingerprint, nodeFingerprint, addressStart }, tracker);
+  tracker.setTotal(addressCount * branchRange);
+  let account = await hodlAccountResultWithProgress(node, definition, network, addressCount, { accountPath: "Imported account key", accountIndex: null, imported: true, parentFingerprint, nodeFingerprint, addressStart, branchHardened: hardening.branch, addressHardened: hardening.address, branchStart, branchRange }, tracker);
   return {
     kind: "hd",
     network,
@@ -1253,7 +1628,34 @@ async function hodlImportedWalletWithProgress(value, network, count, accountInde
   };
 }
 function hodlAccountHasPrivate(account) {
-  return Boolean(account.primaryPrivate || account.receiveDescriptorPriv || account.changeDescriptorPriv || account.receive.some((row) => row.wif) || account.change.some((row) => row.wif));
+  return Boolean(account.primaryPrivate || hodlAccountAddressBranches(account).some((branch) => branch.privateDescriptor || branch.rows.some((row) => row.wif)));
+}
+function hodlAccountAddressBranches(account) {
+  if (account?.addressBranches?.length) return account.addressBranches;
+  return [
+    { branch: 0, role: "receive", label: "Receive", rows: account?.receive || [], publicDescriptor: account?.receiveDescriptor, privateDescriptor: account?.receiveDescriptorPriv },
+    { branch: 1, role: "change", label: "Change", rows: account?.change || [], publicDescriptor: account?.changeDescriptor, privateDescriptor: account?.changeDescriptorPriv }
+  ].filter((entry) => entry.rows.length || entry.publicDescriptor || entry.privateDescriptor);
+}
+function hodlAddressBranchDescriptorFields(branches, isPrivate = false) {
+  return branches.map((branch) => {
+    let descriptor = isPrivate ? branch.privateDescriptor : branch.publicDescriptor;
+    if (!descriptor) return "";
+    let label = `${isPrivate ? "Spending" : "Watch-only"} ${hodlAddressBranchLabel(branch.branch).toLowerCase()} descriptor`;
+    return isPrivate ? Ee(label, descriptor) : ye(label, descriptor);
+  }).join("");
+}
+function hodlAddressBranchKey(prefix, branch) {
+  return `${prefix}-${branch === 0 ? "receive" : branch === 1 ? "change" : `branch-${branch}`}`;
+}
+function hodlAddressBranchTables(branches, includeWif, prefix) {
+  return branches.map((branch) => {
+    let label = hodlAddressBranchLabel(branch.branch), key = hodlAddressBranchKey(prefix, branch.branch);
+    return `<h4 class="wallet-data-subtitle">${$t(label)}</h4>${hodlAddressTable(branch.rows, `${label} addresses`, includeWif, key)}`;
+  }).join("");
+}
+function hodlAddressBranchVirtualConfigs(branches, includeWif, prefix) {
+  return branches.map((branch) => ({ key: hodlAddressBranchKey(prefix, branch.branch), rows: branch.rows, includeWif }));
 }
 function hodlAccountAdvancedExports(account, includePrivate = false) {
   if (!account.hasAlternateExport) return "";
@@ -1291,47 +1693,52 @@ function hodlMatchDerivedAddress(raw,receive=[],change=[]){
   };
   return find(receive,"receive")||find(change,"change")||{state:"miss",receiveCount:(receive||[]).length,changeCount:(change||[]).length}
 }
+function hodlMatchAddressBranches(raw, branches = []) {
+  let address = hodlNormalizeAddressCheck(raw);
+  if (!address) return { state: "empty" };
+  for (let branch of branches) for (let row of branch.rows || []) if (hodlAddressesEqual(address, String(row.address || ""))) return { state: "match", chain: branch.role, branch: branch.branch, index: row.index, path: row.path, address: row.address };
+  return { state: "miss", shownCount: Math.max(0, ...branches.map((branch) => branch.rows?.length || 0)) };
+}
 function hodlAddressCheckRows(){
-  if(re?.kind==="msig")return{receive:re.receive||[],change:re.change||[]};
+  if(re?.kind==="msig")return{receive:re.receive||[],change:re.change||[],branches:hodlAccountAddressBranches(re)};
   if(re?.kind==="hd"){
     let id=hodlSelectedScriptType(),account=re.accounts.find(candidate=>candidate.def.id===id)||re.accounts[0];
-    return{receive:account?.receive||[],change:account?.change||[]}
+    return{receive:account?.receive||[],change:account?.change||[],branches:hodlAccountAddressBranches(account)}
   }
-  return{receive:[],change:[]}
+  return{receive:[],change:[],branches:[]}
 }
 function hodlAddressMatchMarkup(){
   return `<label class="field address-match-field">Check an address
     <input id="address-match" autocomplete="off" spellcheck="false" placeholder="Paste bc1\u2026 or a 1\u2026 / 3\u2026 address">
-    <span class="field-note">Paste a receive or change address shown by another wallet. A match means that wallet computed the same derivation, even if the index is beyond the table above.</span>
+    <span class="field-note">Paste an address shown by another wallet. A match means that wallet computed the same selected branch and derivation, even if the index is beyond the table above.</span>
     <span class="hint" id="address-match-status" role="status"></span>
   </label>`
 }
 var hodlAddressSearchLimit = 1000;
 
 function hodlMatchHdAddressBeyond(address, account, start) {
-  let xpub = account?.xpub || account?.genericPublic;
-  if (!xpub || !account?.def) return {
+  let extendedKey = account?.branchHardened ? account?.xprv || account?.genericPrivate : account?.xpub || account?.genericPublic;
+  if (!extendedKey || !account?.def) return {
     state: "miss",
     searchedTo: start
   };
-  let node = Gt.fromExtendedKey(xpub),
+  let node = Gt.fromExtendedKey(extendedKey),
     network = account.network || re.network,
     script = account.def.script,
     base = account.accountPath || "m";
   let searchEnd = Math.min(hodlMaxAddressIndex + 1, start + hodlAddressSearchLimit);
   for (let index = start; index < searchEnd; index++) {
-    for (let [chain, role] of [
-        [0, "receive"],
-        [1, "change"]
-      ]) {
-      let child = node.derive(`m/${chain}/${index}`),
+    for (let branch of hodlAccountAddressBranches(account)) {
+      let chain = branch.branch, role = branch.role, branchStep = hodlPathIndex(chain, account.branchHardened), indexStep = hodlPathIndex(index, account.addressHardened);
+      let child = node.derive(`m/${branchStep}/${indexStep}`),
         pk = child.publicKey;
       if (!pk) continue;
       if (hodlAddressesEqual(address, pf(script, pk, network))) return {
         state: "match",
         chain: role,
+        branch: chain,
         index,
-        path: `${base}/${chain}/${index}`,
+        path: `${base}/${branchStep}/${indexStep}`,
         beyond: !0
       }
     }
@@ -1348,34 +1755,16 @@ function hodlMatchMsigAddressBeyond(address, start) {
     state: "miss",
     searchedTo: start
   };
-  let bip45 = re.script === "p2sh" && re.scriptStandard === "bip45",
-    receivePath = bip45 ? "m/0/0/" : "m/0/",
-    changePath = bip45 ? "m/0/1/" : "m/1/";
+  let bip45 = re.script === "p2sh" && re.scriptStandard === "bip45";
   let searchEnd = Math.min(hodlMaxAddressIndex + 1, start + hodlAddressSearchLimit);
   for (let index = start; index < searchEnd; index++) {
-    let receiveKeys = nodes.map(node => {
-      let key = node.derive(receivePath + index).publicKey;
-      if (!key) throw new Error("Could not derive a public key");
-      return key
-    });
-    if (hodlAddressesEqual(address, hodlMsigAddr(receiveKeys, re.m, re.network, re.script, re.sorted !== !1).address)) return {
-      state: "match",
-      chain: "receive",
-      index,
-      path: receivePath.slice(1) + index,
-      beyond: !0
-    };
-    let changeKeys = nodes.map(node => {
-      let key = node.derive(changePath + index).publicKey;
-      if (!key) throw new Error("Could not derive a public key");
-      return key
-    });
-    if (hodlAddressesEqual(address, hodlMsigAddr(changeKeys, re.m, re.network, re.script, re.sorted !== !1).address)) return {
-      state: "match",
-      chain: "change",
-      index,
-      path: changePath.slice(1) + index,
-      beyond: !0
+    for (let branch of hodlAccountAddressBranches(re)) {
+      let path = bip45 ? `m/0/${branch.branch}/` : `m/${branch.branch}/`, keys = nodes.map(node => {
+        let key = node.derive(path + index).publicKey;
+        if (!key) throw new Error("Could not derive a public key");
+        return key;
+      });
+      if (hodlAddressesEqual(address, hodlMsigAddr(keys, re.m, re.network, re.script, re.sorted !== !1).address)) return { state: "match", chain: branch.role, branch: branch.branch, index, path: path.slice(1) + index, beyond: !0 };
     }
   }
   return {
@@ -1390,15 +1779,15 @@ function hodlBindAddressMatch() {
   if (!input || !status) return;
   let update = () => {
     let rows = hodlAddressCheckRows(),
-      shown = Math.max(rows.receive.length, rows.change.length), firstShown = Math.min(rows.receive[0]?.index ?? Infinity, rows.change[0]?.index ?? Infinity), lastShown = Math.max(rows.receive.at(-1)?.index ?? -1, rows.change.at(-1)?.index ?? -1), nextIndex = lastShown + 1,
-      result = hodlMatchDerivedAddress(input.value, rows.receive, rows.change);
+      shown = Math.max(0, ...rows.branches.map((branch) => branch.rows.length)), firstShown = Math.min(...rows.branches.map((branch) => branch.rows[0]?.index ?? Infinity)), lastShown = Math.max(...rows.branches.map((branch) => branch.rows.at(-1)?.index ?? -1)), nextIndex = lastShown + 1,
+      result = hodlMatchAddressBranches(input.value, rows.branches);
     if (result.state === "empty") {
       status.textContent = "";
       status.className = "hint";
       return
     }
     let showMatch = hit => {
-      let chain = hit.chain === "receive" ? "Receive" : "Change",
+      let chain = hodlAddressBranchLabel(hit.branch ?? (hit.chain === "receive" ? 0 : 1)),
         extra = hit.beyond ? ` (beyond the ${shown} shown)` : "";
       status.textContent = `${chain} address #${hit.index} of this wallet \xB7 ${hodlDisplayDerivationPath(hit.path)}${extra}`;
       status.className = "hint ok"
@@ -1430,7 +1819,7 @@ function hodlBindAddressMatch() {
       showMatch(beyond);
       return
     }
-    status.textContent = `No match in receive or change indices ${Number.isFinite(firstShown) ? firstShown : 0}\u2013${beyond.searchedTo ?? lastShown} of this derivation.`;
+    status.textContent = `No match in ${hodlAddressBranchSummary(rows.branches.map((branch) => branch.branch)).toLowerCase()} indices ${Number.isFinite(firstShown) ? firstShown : 0}\u2013${beyond.searchedTo ?? lastShown} of this derivation.`;
     status.className = "hint bad"
   };
   input.oninput = update;
@@ -1481,7 +1870,7 @@ function Qs(id) {
   if (!account) return;
   hodlSetSelectedScriptType(id);
   hodlSyncAccountTabs(id);
-  let firstReceive = account.receive[0], hasPrivate = hodlAccountHasPrivate(account), firstIndex = firstReceive?.index ?? 0;
+  let branches = hodlAccountAddressBranches(account), firstBranch = branches[0], firstAddress = firstBranch?.rows[0], firstIndex = firstAddress?.index ?? 0, firstLabel = firstBranch ? hodlAddressBranchLabel(firstBranch.branch) : "Address", hasPrivate = hodlAccountHasPrivate(account), purposeLabel = account.imported || account.def.purpose == null ? account.def.bip : `Purpose ${hodlOriginPathIndex(account.def.purpose, account.def.purposeHardened !== false)}`;
   let privateSection = hasPrivate ? `
     <section class="account-result-section account-private-section" aria-labelledby="account-private-heading">
       <div class="wallet-data-section-head">
@@ -1489,14 +1878,13 @@ function Qs(id) {
         <p class="muted">These exports can spend from this account. They are shown only for a seed or extended private-key source.</p>
       </div>
       ${Ee(`Account ${account.primaryPrivateLabel}`, account.primaryPrivate)}
-      ${Ee("Spending receive descriptor", account.receiveDescriptorPriv)}
-      ${Ee("Spending change descriptor", account.changeDescriptorPriv)}
+      ${hodlAddressBranchDescriptorFields(branches, true)}
       ${hodlAccountAdvancedExports(account, true)}
       <p class="account-private-warning"><strong>Keep these exports together only in secure offline backups.</strong> An account extended public key combined with any non-hardened descendant private key, including a WIF shown in the address tables below, can reconstruct that account's extended private key.</p>
     </section>` : "";
   W("#acct").innerHTML = `
     <section class="card account-result-card">
-      <div class="kicker">${$t(account.imported ? account.def.bip : `Purpose ${account.def.purpose}h`)} \xB7 ${$t(re.network)}</div>
+      <div class="kicker">${$t(purposeLabel)} \xB7 ${$t(re.network)}</div>
       <h2>${$t(account.def.label)}</h2>
       <p class="muted">${$t(account.def.beginner)}</p>
       ${privateSection}
@@ -1507,23 +1895,20 @@ function Qs(id) {
         </div>
         ${ye(`Account ${account.primaryPublicLabel}`, account.primaryPublic)}
         ${hodlRenderMultisigCosignerExport(re.multisigCosignerExports, account.def.id)}
-        ${hodlWatchOnlyDescriptorExport(account.receiveDescriptor, account.changeDescriptor)}
+        ${hodlWatchOnlyDescriptorExport(account.receiveDescriptor, account.changeDescriptor, branches)}
         ${hodlAccountAdvancedExports(account, false)}
       </section>
       <section class="account-result-section account-address-section" aria-labelledby="account-address-heading">
         <div class="wallet-data-section-head">
           <h3 id="account-address-heading">Addresses</h3>
-          <p class="muted">Verify the first receive address on another trusted wallet or signing device before accepting bitcoin.</p>
+          <p class="muted">Verify the first selected address on another trusted wallet or signing device before accepting bitcoin.</p>
         </div>
-        ${firstReceive ? `<div class="account-address-lead"><h4 class="wallet-data-subtitle">Receive address #${firstIndex}</h4><div class="qr" aria-label="Receive address ${firstIndex} QR code">${an(firstReceive.address)}</div><p class="mono">${$t(firstReceive.address)}</p><p class="muted mono">${$t(hodlDisplayDerivationPath(firstReceive.path))}</p></div>` : ""}
-        <h4 class="wallet-data-subtitle">Receive</h4>
-        ${hodlAddressTable(account.receive, "Receive addresses", hasPrivate, "hd-receive")}
-        <h4 class="wallet-data-subtitle">Change</h4>
-        ${hodlAddressTable(account.change, "Change addresses", hasPrivate, "hd-change")}
+        ${firstAddress ? `<div class="account-address-lead"><h4 class="wallet-data-subtitle">${$t(firstLabel)} address #${firstIndex}</h4><div class="qr" aria-label="${$t(firstLabel)} address ${firstIndex} QR code">${an(firstAddress.address)}</div><p class="mono">${$t(firstAddress.address)}</p><p class="muted mono">${$t(hodlDisplayDerivationPath(firstAddress.path))}</p></div>` : ""}
+        ${hodlAddressBranchTables(branches, hasPrivate, "hd")}
         ${hodlAddressMatchMarkup()}
       </section>
     </section>`;
-  hodlBindAddressVirtualization([{ key: "hd-receive", rows: account.receive, includeWif: hasPrivate }, { key: "hd-change", rows: account.change, includeWif: hasPrivate }]);
+  hodlBindAddressVirtualization(hodlAddressBranchVirtualConfigs(branches, hasPrivate, "hd"));
   hodlBindAddressMatch()
 }
 function ye(label, value) {
@@ -1576,9 +1961,9 @@ function hodlSaveRecoveryControl() {
 }
 function hodlWalletMessages(wallet, idPrefix) {
   let warnings = [...wallet.warnings || []].filter((message) => !wallet.passphraseUsed || !/\bpassphrase\b/i.test(message)), notes = [...wallet.notes || []];
-  if (wallet.passphraseUsed) warnings.unshift("A BIP39 passphrase is in use. It creates a different wallet, is not printed in the recovery sheet, and must be preserved separately to recover this wallet.");
+  if (wallet.passphraseUsed) warnings.unshift(wallet.seedFormat === "electrum" ? "An Electrum passphrase is in use. It creates a different wallet, is not printed in the recovery sheet, and must be preserved separately to recover this wallet." : "A BIP39 passphrase is in use. It creates a different wallet, is not printed in the recovery sheet, and must be preserved separately to recover this wallet.");
   if (!warnings.length && !notes.length) return "";
-  let items = [...warnings.map((message) => `<li class="is-warning">${$t(message)}</li>`), ...notes.map((message) => `<li>${$t(message)}</li>`)].join("");
+  let items = [...warnings.map((message) => `<li class="${/BIP39-only software|TrustedCoin/.test(message) ? "is-danger" : "is-warning"}">${$t(message)}</li>`), ...notes.map((message) => `<li>${$t(message)}</li>`)].join("");
   return `<section class="wallet-result-messages" aria-labelledby="${idPrefix}-safety-heading"><h3 id="${idPrefix}-safety-heading">Safety notes</h3><ul>${items}</ul></section>`;
 }
 function hodlSingleWalletData(wallet) {
@@ -1625,14 +2010,14 @@ function hodlSingleWalletData(wallet) {
 }
 function hodlHdWalletData(wallet) {
   let privateFields = [];
-  if (wallet.mnemonic) privateFields.push(hodlSeedPhraseField(`Your seed phrase \xB7 ${wallet.mnemonic.trim().split(/\s+/).length} words`, wallet.mnemonic), hodlSeedQrExport(wallet.mnemonic, { passphraseUsed: wallet.passphraseUsed, entropyHex: wallet.entropyHex }));
-  if (wallet.entropyHex) privateFields.push(Ee("BIP39 entropy hex", wallet.entropyHex));
-  if (wallet.seedHex) privateFields.push(Ee("Master seed hex", wallet.seedHex));
+  if (wallet.mnemonic) privateFields.push(hodlSeedPhraseField(`Your seed phrase \xB7 ${wallet.mnemonic.trim().split(/\s+/).length} words`, wallet.mnemonic), wallet.seedFormat === "electrum" ? "" : hodlSeedQrExport(wallet.mnemonic, { passphraseUsed: wallet.passphraseUsed, entropyHex: wallet.entropyHex }));
+  if (wallet.entropyHex) privateFields.push(Ee(wallet.seedFormat === "electrum" ? "Source entropy hex" : "BIP39 entropy hex", wallet.entropyHex));
+  if (wallet.seedHex) privateFields.push(Ee(wallet.seedFormat === "electrum" ? "Master seed hex (Electrum PBKDF2)" : "Master seed hex", wallet.seedHex));
   if (wallet.rootXprv) privateFields.push(Ee(`Root ${wallet.rootPrivateLabel || cr[wallet.network].x.prvName}`, wallet.rootXprv));
   if (wallet.importedPrivateKey) privateFields.push(Ee(`Imported ${wallet.importedPrivateLabel || "extended private key"}`, wallet.importedPrivateKey));
   let hasAccountPrivate = wallet.accounts.some(hodlAccountHasPrivate), hasPrivate = privateFields.length > 0 || hasAccountPrivate;
   let privateContent = privateFields.length ? privateFields.join("") : `<p class="muted">Private account material is available in the selected script panel below; no BIP32 root private key was supplied.</p>`;
-  let intro = wallet.mnemonic ? "Review the root material derived from this seed. Private recovery data is grouped first; watch-only data appears below." : "Review the material available from this imported extended key. Private data, when present, is grouped first; watch-only data appears below.";
+  let intro = wallet.mnemonic ? wallet.seedFormat === "electrum" ? "Review the root material derived from this Electrum seed. Private recovery data is grouped first; watch-only data appears below." : "Review the root material derived from this seed. Private recovery data is grouped first; watch-only data appears below." : "Review the material available from this imported extended key. Private data, when present, is grouped first; watch-only data appears below.";
   let source = wallet.mnemonic ? "" : `<p><span class="muted">Source</span><br><span>Imported extended ${hasPrivate ? "private" : "public"} key; no seed phrase was entered.</span></p>`;
   let privateSection = hasPrivate ? `<section class="wallet-data-section wallet-private-section" aria-labelledby="wallet-private-heading">
       <div class="wallet-data-section-head">
@@ -1761,6 +2146,7 @@ function hodlSheetWifRows(lines, label, rows) {
 Oo = function(wallet, revealPrivate) {
   let lines = ["ENTROPYLAB \u2014 RECOVERY SHEET", "This file was computed locally. The calculator never generated wallet entropy.", ""];
   lines.push(`Network: ${wallet.network}`);
+  if (wallet.seedFormat === "electrum") lines.push(`Format: ${wallet.electrum?.title || "Electrum seed"} (version ${wallet.electrum?.prefix || "?"})`);
   if (wallet.passphraseUsed) lines.push("Passphrase: YES (not printed)");
   hodlSheetWarnings(lines, wallet);
   lines.push("");
@@ -1780,20 +2166,18 @@ Oo = function(wallet, revealPrivate) {
       let seedQrDigits = hodlSeedQrDigits(wallet.mnemonic);
       if (seedQrDigits) lines.push("", "SEEDQR DIGITS", seedQrDigits);
     }
-    if (wallet.entropyHex) lines.push("", "BIP39 ENTROPY HEX", wallet.entropyHex);
-    if (wallet.seedHex) lines.push("", "MASTER SEED HEX (BIP39 PBKDF2, 512 bits)", wallet.seedHex);
+    if (wallet.entropyHex) lines.push("", wallet.seedFormat === "electrum" ? "SOURCE ENTROPY HEX" : "BIP39 ENTROPY HEX", wallet.entropyHex);
+    if (wallet.seedHex) lines.push("", wallet.seedFormat === "electrum" ? "MASTER SEED HEX (ELECTRUM PBKDF2, 512 bits)" : "MASTER SEED HEX (BIP39 PBKDF2, 512 bits)", wallet.seedHex);
     if (wallet.rootXprv) lines.push("", `BIP32 ROOT ${(wallet.rootPrivateLabel || cr[wallet.network].x.prvName).toUpperCase()}`, wallet.rootXprv);
     if (wallet.importedPrivateKey) lines.push("", `IMPORTED ${(wallet.importedPrivateLabel || "EXTENDED PRIVATE KEY").toUpperCase()}`, wallet.importedPrivateKey);
     for (let account of wallet.accounts) {
       if (!hodlAccountHasPrivate(account)) continue;
-      lines.push("", `-- ${account.def.label} (${account.imported ? account.def.bip : `Purpose ${account.def.purpose}h`}) PRIVATE ACCOUNT MATERIAL --`);
+      lines.push("", `-- ${account.def.label} (${account.imported ? account.def.bip : `Purpose ${hodlOriginPathIndex(account.def.purpose, account.def.purposeHardened !== false)}`}) PRIVATE ACCOUNT MATERIAL --`);
       if (account.primaryPrivate) lines.push(`${account.primaryPrivateLabel}: ${account.primaryPrivate}`);
       if (account.hasAlternateExport && account.genericPrivate) lines.push(`Advanced ${account.genericPrivateLabel} descriptor export: ${account.genericPrivate}`);
-      if (account.receiveDescriptorPriv) lines.push(`Spending receive descriptor: ${account.receiveDescriptorPriv}`);
-      if (account.changeDescriptorPriv) lines.push(`Spending change descriptor:  ${account.changeDescriptorPriv}`);
+      for (let branch of hodlAccountAddressBranches(account)) if (branch.privateDescriptor) lines.push(`Spending ${hodlAddressBranchLabel(branch.branch).toLowerCase()} descriptor: ${branch.privateDescriptor}`);
       lines.push("Warning: An account extended public key plus a non-hardened descendant private key can reconstruct the account extended private key.");
-      hodlSheetWifRows(lines, "Receive-address private keys (WIF)", account.receive);
-      hodlSheetWifRows(lines, "Change-address private keys (WIF)", account.change);
+      for (let branch of hodlAccountAddressBranches(account)) hodlSheetWifRows(lines, `${hodlAddressBranchLabel(branch.branch)}-address private keys (WIF)`, branch.rows);
     }
   } else if (hasPrivate) {
     lines.push("PRIVATE RECOVERY MATERIAL OMITTED", "Private values were not saved because Show private recovery material was off.");
@@ -1811,48 +2195,38 @@ Oo = function(wallet, revealPrivate) {
   }
   if (wallet.importedPublicKey) lines.push(`Imported ${(wallet.importedPublicLabel || "extended public key").toUpperCase()}: ${wallet.importedPublicKey}`);
   for (let account of wallet.accounts) {
-    lines.push("", `=== ${account.def.label} (${account.imported ? account.def.bip : `Purpose ${account.def.purpose}h`}) ===`, account.def.beginner, `Network: ${wallet.network}`, `Account: ${account.imported ? "Imported account key" : account.accountIndex ?? 0}`, `Account path: ${hodlDisplayDerivationPath(account.accountPath)}`);
+    lines.push("", `=== ${account.def.label} (${account.imported || account.def.purpose == null ? account.def.bip : `Purpose ${hodlOriginPathIndex(account.def.purpose, account.def.purposeHardened !== false)}`}) ===`, account.def.beginner, `Network: ${wallet.network}`, `Account: ${account.imported ? "Imported account key" : account.accountIndex ?? 0}`, `Account path: ${hodlDisplayDerivationPath(account.accountPath)}`);
     if (account.masterFingerprint || wallet.masterFingerprint) lines.push(`Master fingerprint: ${account.masterFingerprint || wallet.masterFingerprint}`);
     else if (account.parentFingerprint) lines.push(`Encoded parent fingerprint (not a master fingerprint): ${account.parentFingerprint}`);
     if (!account.masterFingerprint && !wallet.masterFingerprint && account.nodeFingerprint) lines.push(`Imported key fingerprint (not a master fingerprint): ${account.nodeFingerprint}`);
-    lines.push("WATCH-ONLY EXPORTS", `${account.primaryPublicLabel}: ${account.primaryPublic}`, ...account.walletDescriptor ? [`Watch-only wallet descriptor: ${account.walletDescriptor}`] : [], `Watch-only receive descriptor: ${account.receiveDescriptor}`, `Watch-only change descriptor:  ${account.changeDescriptor}`);
+    lines.push("WATCH-ONLY EXPORTS", `${account.primaryPublicLabel}: ${account.primaryPublic}`, ...account.walletDescriptor ? [`Watch-only wallet descriptor: ${account.walletDescriptor}`] : []);
+    for (let branch of hodlAccountAddressBranches(account)) if (branch.publicDescriptor) lines.push(`Watch-only ${hodlAddressBranchLabel(branch.branch).toLowerCase()} descriptor: ${branch.publicDescriptor}`);
     if (account.hasAlternateExport) lines.push(`Advanced ${account.genericPublicLabel} descriptor export: ${account.genericPublic}`);
     lines.push("ADDRESSES");
-    hodlSheetAddressRows(lines, "Receive", account.receive);
-    hodlSheetAddressRows(lines, "Change", account.change);
+    for (let branch of hodlAccountAddressBranches(account)) hodlSheetAddressRows(lines, hodlAddressBranchLabel(branch.branch), branch.rows);
   }
   return lines.join("\n");
 };
 var hodlMaxPurpose = 2147483647, hodlMaxCoinType = 2147483647, hodlMaxAccount = 2147483647;
 function hodlScriptDefinition(id) {
-  return To.find((definition) => definition.id === id) || To.find((definition) => definition.id === "bip84") || To[0];
+  return To.find((definition) => definition.id === id) || Object.values(ELECTRUM_PREFIXES).map(electrumAccountDefinition).find((definition) => definition.id === id) || To.find((definition) => definition.id === "bip84") || To[0];
 }
 function hodlReadPurpose(mark = true) {
-  let input = document.getElementById("purpose"), raw = String(input?.value ?? "").trim(), message = "Purpose must be a whole number from 0 to 2,147,483,647.";
-  let value = Number(raw), valid = /^\d+$/.test(raw) && Number.isSafeInteger(value) && value >= 0 && value <= hodlMaxPurpose;
-  if (mark) {
-    input?.classList.toggle("bad", !valid);
-    input?.setAttribute("aria-invalid", String(!valid));
-  }
-  if (!valid) throw new Error(message);
-  return value;
+  return hodlReadDerivationIndex(document.getElementById("purpose"), "Purpose", mark);
 }
 function hodlSetPurpose(value) {
   let purpose = Number(value), input = document.getElementById("purpose");
   if (!Number.isSafeInteger(purpose) || purpose < 0 || purpose > hodlMaxPurpose) purpose = 84;
-  if (input) input.value = String(purpose);
+  if (input) {
+    input.value = String(purpose);
+    hodlSyncDerivationPrime(input);
+  }
   let state = hodlKeys[hodlActiveKey];
   if (state) state.fields.purpose = String(purpose);
   return purpose;
 }
 function hodlReadCoinType(input = document.getElementById("network"), mark = true) {
-  let raw = String(input?.value ?? "").trim(), value = Number(raw), valid = /^\d+$/.test(raw) && Number.isSafeInteger(value) && value >= 0 && value <= hodlMaxCoinType;
-  if (mark) {
-    input?.classList.toggle("bad", !valid);
-    input?.setAttribute("aria-invalid", String(!valid));
-  }
-  if (!valid) throw new Error("Coin type must be a whole number from 0 to 2,147,483,647.");
-  return value;
+  return hodlReadDerivationIndex(input, "Coin type", mark);
 }
 function hodlNetworkFromCoinType(coinType) {
   return Number(coinType) === 1 ? "testnet" : "mainnet";
@@ -1867,7 +2241,17 @@ function hodlUpdateCoinTypeHelp(input = document.getElementById("network"), help
     label = hodlCoinTypeNetworkLabel(hodlReadCoinType(input, false));
   } catch {
   }
-  help.textContent = `Coin type index · ${label} · Hardened · 0 to 2,147,483,647`;
+  let prefix = input?.id?.startsWith("msig-") ? "msig-" : "", hardened = hodlReadHardening(prefix).coinType;
+  help.textContent = `Coin type index · ${label} · ${hardened ? "Hardened" : "Unhardened"} · 0 to 2,147,483,647`;
+}
+function hodlUpdateHardeningHelp(prefix = "") {
+  let hardening = hodlReadHardening(prefix), purpose = document.getElementById(`${prefix}purpose-help`), account = document.getElementById(`${prefix}account-help`), script = document.getElementById(`${prefix}scheme-script-index-help`), branch = document.getElementById(`${prefix}branch-start-help`), start = document.getElementById(`${prefix}address-start-help`), custom = !prefix && hodlSelectedDerivationScheme() === "custom";
+  if (purpose) purpose.textContent = `Purpose index · ${hardening.purpose ? "Hardened" : "Unhardened"} · 0 to 2,147,483,647`;
+  if (account && !(prefix && document.getElementById(`${prefix}account`)?.dataset.state === "not-applicable")) account.textContent = prefix ? `Account index · ${hardening.account ? "Hardened" : "Unhardened"} · Derived from co-signer key origins.` : `Account index · ${hardening.account ? "Hardened" : "Unhardened"} · 0 to 2,147,483,647`;
+  if (script) script.textContent = `BIP48 script type index · 1 is Nested SegWit · 2 is Native SegWit · ${hardening.script ? "Hardened" : "Unhardened"}`;
+  if (branch) branch.textContent = `${custom ? "First child branch" : "First address branch"} to derive · 0 is Receive · 1 is Change · ${hardening.branch ? "Hardened" : "Unhardened"} · 0 to 2,147,483,647`;
+  if (start) start.textContent = `${custom ? "First child address" : "First receive and change"} index to derive · ${hardening.address ? "Hardened" : "Unhardened"} · 0 to 2,147,483,647`;
+  hodlUpdateCoinTypeHelp(document.getElementById(`${prefix}network`), document.getElementById(`${prefix}network-help`));
 }
 function hodlSelectedScriptType() {
   let value = document.getElementById("script-type")?.value || hodlAccountId || "bip84";
@@ -1885,6 +2269,41 @@ function hodlSetSelectedScriptType(value, resetPurpose = false) {
   }
   hodlUpdateDerivationPathPreview();
   return id;
+}
+function hodlUpdateDerivationSchemeControls() {
+  let scheme = hodlSelectedDerivationScheme(), custom = scheme === "custom", bip48 = scheme === "bip48", singleKey = Ne === "key";
+  let purposeNetwork = document.getElementById("purpose-network-settings"), accountSettings = document.getElementById("account-address-settings"), scriptIndex = document.getElementById("scheme-script-index-field"), customSettings = document.getElementById("custom-derivation-settings"), branchLabel = document.getElementById("branch-start-label"), addressLabel = document.getElementById("address-start-label"), baseLabel = document.getElementById("derivation-base-label");
+  if (purposeNetwork) purposeNetwork.hidden = custom && !singleKey;
+  if (accountSettings) accountSettings.hidden = custom || singleKey;
+  if (scriptIndex) scriptIndex.hidden = !bip48 || singleKey;
+  if (customSettings) customSettings.hidden = !custom || singleKey;
+  if (branchLabel) branchLabel.textContent = custom ? "Starting child branch index" : "Starting change / branch index";
+  if (addressLabel) addressLabel.textContent = custom ? "Starting child address index" : "Starting address index";
+  if (baseLabel) baseLabel.textContent = custom ? "Custom base" : bip48 ? "Script account" : "Account";
+  hodlSyncDerivationPrimes();
+}
+function hodlSetDerivationScheme(value, resetValues = false) {
+  let scheme = hodlNormalizeDerivationScheme(value), definition = hodlDerivationSchemes[scheme], select = document.getElementById("derivation-scheme");
+  hodlSyncSelect(select, scheme);
+  if (resetValues && scheme !== "custom") {
+    hodlSetPurpose(definition.purpose);
+    let purposeHarden = document.getElementById("purpose-harden");
+    if (purposeHarden) purposeHarden.checked = true;
+    if (scheme === "bip48") {
+      hodlSetSelectedScriptType("bip84");
+      let scriptIndex = document.getElementById("scheme-script-index"), scriptHarden = document.getElementById("scheme-script-index-harden");
+      if (scriptIndex) scriptIndex.value = String(definition.scriptIndex);
+      if (scriptHarden) scriptHarden.checked = true;
+    } else {
+      hodlSetSelectedScriptType(definition.script);
+    }
+  }
+  let state = hodlKeys[hodlActiveKey];
+  if (state) state.fields.derivationScheme = scheme;
+  hodlUpdateDerivationSchemeControls();
+  hodlUpdateHardeningHelp();
+  hodlUpdateDerivationPathPreview();
+  return scheme;
 }
 function hodlSyncAccountTabs(id) {
   let box = document.getElementById("acct-tabs"), panel = document.getElementById("acct");
@@ -1914,39 +2333,64 @@ function hodlAccountTabsKeydown(event) {
   buttons[next].click();
   buttons[next].focus();
 }
-function hodlReadAccount() {
-  let input = document.getElementById("account"), raw = String(input?.value ?? "").trim(), message = "Account must be a whole number from 0 to 2,147,483,647.";
-  let invalid = () => {
-    if (input) {
-      input.classList.add("bad");
-      input.setAttribute("aria-invalid", "true");
-    }
-    throw new Error(message);
-  };
-  if (!/^\d+$/.test(raw)) invalid();
-  let value = Number(raw);
-  if (!Number.isSafeInteger(value) || value < 0 || value > hodlMaxAccount) invalid();
-  if (input) {
-    input.classList.remove("bad");
-    input.setAttribute("aria-invalid", "false");
-  }
-  return value;
+function hodlReadAccount(mark = true) {
+  return hodlReadDerivationIndex(document.getElementById("account"), "Account", mark);
 }
 var hodlMaxAddressIndex = 2147483647, hodlMaxAddressRange = 10000, hodlAddressBenchmarkMs = null;
+function hodlSyncBranchRangeLimit(prefix = "") {
+  let startInput = document.getElementById(`${prefix}branch-start`), rangeInput = document.getElementById(`${prefix}branch-range`);
+  if (!rangeInput) return 2;
+  let startRaw = String(startInput?.value ?? "").trim(), start = Number(startRaw), startValid = /^\d+$/.test(startRaw) && Number.isSafeInteger(start) && start >= 0 && start <= hodlMaxAddressIndex;
+  let maximum = startValid ? Math.min(2, hodlMaxAddressIndex - start + 1) : 2;
+  rangeInput.max = String(maximum);
+  let rangeRaw = String(rangeInput.value ?? "").trim(), range = Number(rangeRaw);
+  if (/^\d+$/.test(rangeRaw) && Number.isSafeInteger(range) && range > maximum) rangeInput.value = String(maximum);
+  return maximum;
+}
+function hodlReadBranchWindow(prefix = "", mark = true) {
+  let startInput = document.getElementById(`${prefix}branch-start`), rangeInput = document.getElementById(`${prefix}branch-range`), startRaw = String(startInput?.value ?? "").trim(), rangeRaw = String(rangeInput?.value ?? "").trim();
+  let start = Number(startRaw), range = Number(rangeRaw), startValid = /^\d+$/.test(startRaw) && Number.isSafeInteger(start) && start >= 0 && start <= hodlMaxAddressIndex;
+  let maximum = startValid ? Math.min(2, hodlMaxAddressIndex - start + 1) : 2;
+  let rangeValid = /^\d+$/.test(rangeRaw) && Number.isSafeInteger(range) && range >= 1 && range <= maximum, endValid = startValid && rangeValid && start + range - 1 <= hodlMaxAddressIndex;
+  if (mark) {
+    startInput?.classList.toggle("bad", !startValid);
+    startInput?.setAttribute("aria-invalid", String(!startValid));
+    rangeInput?.classList.toggle("bad", !rangeValid || !endValid);
+    rangeInput?.setAttribute("aria-invalid", String(!rangeValid || !endValid));
+  }
+  if (!startValid) throw new Error("Starting address branch index must be a whole number from 0 to 2,147,483,647.");
+  if (!rangeValid) throw new Error(`Address branch range must be a whole number from 1 to ${maximum}.`);
+  if (!endValid) throw new Error("The address branch range extends beyond the maximum BIP32 child index of 2,147,483,647.");
+  return { start, range, end: start + range - 1, branches: Array.from({ length: range }, (_, offset) => start + offset) };
+}
+function hodlAddressBranchSummary(branches) {
+  return branches.map(hodlAddressBranchLabel).join(" and ");
+}
+function hodlSyncAddressRangeLimit(prefix = "") {
+  let startInput = document.getElementById(`${prefix}address-start`), rangeInput = document.getElementById(`${prefix}address-range`);
+  if (!rangeInput) return hodlMaxAddressRange;
+  let startRaw = String(startInput?.value ?? "").trim(), start = Number(startRaw), startValid = /^\d+$/.test(startRaw) && Number.isSafeInteger(start) && start >= 0 && start <= hodlMaxAddressIndex;
+  let maximum = startValid ? Math.min(hodlMaxAddressRange, hodlMaxAddressIndex - start + 1) : hodlMaxAddressRange;
+  rangeInput.max = String(maximum);
+  let rangeRaw = String(rangeInput.value ?? "").trim(), range = Number(rangeRaw);
+  if (/^\d+$/.test(rangeRaw) && Number.isSafeInteger(range) && range > maximum) rangeInput.value = String(maximum);
+  return maximum;
+}
 function hodlReadAddressWindow(prefix = "", mark = true) {
   let startInput = document.getElementById(`${prefix}address-start`), rangeInput = document.getElementById(`${prefix}address-range`), startRaw = String(startInput?.value ?? "").trim(), rangeRaw = String(rangeInput?.value ?? "").trim();
   let start = Number(startRaw), range = Number(rangeRaw), startValid = /^\d+$/.test(startRaw) && Number.isSafeInteger(start) && start >= 0 && start <= hodlMaxAddressIndex;
-  let rangeValid = /^\d+$/.test(rangeRaw) && Number.isSafeInteger(range) && range >= 1 && range <= hodlMaxAddressRange;
+  let maximum = startValid ? Math.min(hodlMaxAddressRange, hodlMaxAddressIndex - start + 1) : hodlMaxAddressRange;
+  let rangeValid = /^\d+$/.test(rangeRaw) && Number.isSafeInteger(range) && range >= 1 && range <= maximum;
   let endValid = startValid && rangeValid && start + range - 1 <= hodlMaxAddressIndex;
   if (mark) {
-    startInput?.classList.toggle("bad", !startValid || !endValid);
-    startInput?.setAttribute("aria-invalid", String(!startValid || !endValid));
+    startInput?.classList.toggle("bad", !startValid);
+    startInput?.setAttribute("aria-invalid", String(!startValid));
     rangeInput?.classList.toggle("bad", !rangeValid || !endValid);
     rangeInput?.setAttribute("aria-invalid", String(!rangeValid || !endValid));
   }
   if (!startValid) throw new Error("Starting address index must be a whole number from 0 to 2,147,483,647.");
-  if (!rangeValid) throw new Error("Address range must be a whole number from 1 to 10,000.");
-  if (!endValid) throw new Error("The address range extends beyond the maximum non-hardened address index of 2,147,483,647.");
+  if (!rangeValid) throw new Error(`Address range must be a whole number from 1 to ${maximum.toLocaleString()}.`);
+  if (!endValid) throw new Error("The address range extends beyond the maximum BIP32 child index of 2,147,483,647.");
   return { start, range, end: start + range - 1 };
 }
 function hodlFormatAddressEstimate(milliseconds) {
@@ -1956,14 +2400,19 @@ function hodlFormatAddressEstimate(milliseconds) {
   return `about ${Math.ceil(milliseconds / 60000)} minutes`;
 }
 function hodlUpdateAddressEstimate(prefix = "") {
-  let estimate = document.getElementById(`${prefix}address-estimate`), help = document.getElementById(`${prefix}address-range-help`);
-  if (!estimate || !help) return;
+  let estimate = document.getElementById(`${prefix}address-estimate`), help = document.getElementById(`${prefix}address-range-help`), startHelp = document.getElementById(`${prefix}address-start-help`), branchHelp = document.getElementById(`${prefix}branch-range-help`);
+  if (!estimate || !help || !startHelp || !branchHelp) return;
+  let maximum = hodlSyncAddressRangeLimit(prefix), branchMaximum = hodlSyncBranchRangeLimit(prefix);
   try {
-    let { range } = hodlReadAddressWindow(prefix, false), keyCount = prefix ? Math.max(1, Number(document.getElementById("msig-n")?.value) || 1) : (hodlImportedExtendedKeyDepth() ?? 0) > 0 ? 1 : 4;
-    help.textContent = `Derives ${range.toLocaleString()} receive and ${range.toLocaleString()} change addresses.`;
-    estimate.textContent = hodlAddressBenchmarkMs == null ? "Measuring this device\u2026" : `Estimated derivation time on this device: ${hodlFormatAddressEstimate(hodlAddressBenchmarkMs * range * 2 * keyCount)}.`;
+    let { range } = hodlReadAddressWindow(prefix, false), { branches } = hodlReadBranchWindow(prefix, false), hardening = hodlReadHardening(prefix), keyCount = prefix ? Math.max(1, Number(document.getElementById("msig-n")?.value) || 1) : (hodlImportedExtendedKeyDepth() ?? 0) > 0 ? 1 : 4;
+    let branchLabels = hodlAddressBranchSummary(branches), addressCopies = branches.map((branch) => `${range.toLocaleString()} ${hodlAddressBranchLabel(branch).toLowerCase()}`).join(" and ");
+    branchHelp.textContent = `Derives ${branchLabels} ${hardening.branch ? "hardened " : ""}${branches.length === 1 ? "branch" : "branches"} · Max ${branchMaximum}`;
+    startHelp.textContent = `First ${branchLabels.toLowerCase()} index to derive · ${hardening.address ? "Hardened" : "Unhardened"} · 0 to 2,147,483,647`;
+    help.textContent = `Derives ${addressCopies} ${range * branches.length === 1 ? "address" : "addresses"} · Max ${maximum.toLocaleString()}`;
+    estimate.textContent = hodlAddressBenchmarkMs == null ? "Measuring this device\u2026" : `Estimated derivation time on this device: ${hodlFormatAddressEstimate(hodlAddressBenchmarkMs * range * branches.length * keyCount)}.`;
   } catch (error) {
-    help.textContent = "Choose a valid receive and change address range.";
+    branchHelp.textContent = "Choose one or two valid address branches.";
+    help.textContent = "Choose a valid address range.";
     estimate.textContent = error.message;
   }
 }
@@ -1984,8 +2433,8 @@ function hodlInitAddressBenchmark() {
   if ("requestIdleCallback" in window) requestIdleCallback(run, { timeout: 750 });
   else setTimeout(run, 0);
   document.addEventListener("input", (event) => {
-    if (["address-start", "address-range", "seed"].includes(event.target?.id)) hodlUpdateAddressEstimate();
-    if (["msig-address-start", "msig-address-range", "msig-m-number", "msig-n-number", "msig-m", "msig-n"].includes(event.target?.id)) hodlUpdateAddressEstimate("msig-");
+    if (["branch-start", "branch-start-harden", "branch-range", "address-start", "address-range", "seed"].includes(event.target?.id)) hodlUpdateAddressEstimate();
+    if (["msig-branch-start", "msig-branch-start-harden", "msig-branch-range", "msig-address-start", "msig-address-range", "msig-m-number", "msig-n-number", "msig-m", "msig-n"].includes(event.target?.id)) hodlUpdateAddressEstimate("msig-");
   });
 }
 class HodlDerivationCancelledError extends Error {
@@ -2140,15 +2589,81 @@ function hodlImportedExtendedKeyDepth() {
   }
 }
 function hodlUpdateKeyModeControls() {
-  let singleKey = Ne === "key", settings = document.getElementById("key-settings");
-  ["passphrase-field", "master-fingerprint-preview", "script-type-field", "purpose-field", "account-field", "address-range-settings", "derivation-path-preview"].forEach((id) => {
+  let singleKey = Ne === "key", settings = document.getElementById("key-settings"), electrum = !singleKey && Boolean(hodlElectrumIntent());
+  ["passphrase-field", "master-fingerprint-preview", "derivation-scheme-field", "script-type-field", "purpose-field", "account-field", "address-branch-settings", "address-range-settings", "derivation-path-preview"].forEach((id) => {
     let element = document.getElementById(id);
     if (element) element.hidden = singleKey;
   });
+  hodlUpdateDerivationSchemeControls();
+  if (electrum) ["derivation-scheme-field", "script-type-field", "purpose-field", "account-field", "scheme-script-index-field", "custom-derivation-settings"].forEach((id) => {
+    let element = document.getElementById(id);
+    if (element) element.hidden = true;
+  });
   settings?.classList.toggle("single-key-mode", singleKey);
+  hodlSyncElectrumPassphraseLabel();
+}
+function hodlElectrumGenerateAvailable() {
+  if (Ne === "hex") return true;
+  if (Ne === "dice") return ge === "coldcard" || ge === "coleman";
+  if (Ne === "cards") return hodlCardMethod === "hashed";
+  return false;
+}
+function hodlElectrumGenerateEnabled() {
+  return hodlElectrumGenerateAvailable() && hodlElectrumGenerate;
+}
+function hodlElectrumIntent() {
+  if (hodlElectrumGenerateEnabled()) return ELECTRUM_PREFIXES[hodlElectrumType] || ELECTRUM_PREFIXES["100"];
+  if (Ne !== "seed") return null;
+  let selected = hodlSelectedSeedInput(Pt);
+  if (!selected.value || selected.extended) return null;
+  let classified = hodlClassifyMnemonic(selected.value);
+  return classified.format === "electrum" ? classified.electrum : null;
+}
+function hodlSyncElectrumPassphraseLabel() {
+  let label = document.querySelector("#passphrase-field > label[for='pass'], #passphrase-field label[for=pass]");
+  let pass = document.getElementById("pass");
+  let electrum = Boolean(hodlElectrumIntent());
+  if (label) label.textContent = electrum ? "Optional Electrum passphrase" : "Optional BIP39 passphrase";
+  if (pass) pass.placeholder = electrum ? "Enter an Electrum passphrase, or leave blank for none" : "Enter a BIP39 passphrase, or leave blank for none";
+}
+function hodlElectrumGenerateMarkup() {
+  if (!hodlElectrumGenerateAvailable()) return "";
+  let type = ELECTRUM_PREFIXES[hodlElectrumType] || ELECTRUM_PREFIXES["100"];
+  return `<div class="electrum-generate">
+    <label class="seed-autocomplete-toggle electrum-seed-toggle"><input type="checkbox" id="electrum-seed" ${hodlElectrumGenerate ? "checked" : ""} /><span><strong>Electrum seed</strong> <span class="seed-autocomplete-note">(grind a 12-word Electrum-native phrase from this entropy; will NOT restore as BIP39)</span></span></label>
+    <div class="choice-grid electrum-type-grid" ${hodlElectrumGenerate ? "" : "hidden"}>
+      <label class="choice"><input type="radio" name="electrum-type" value="01" ${type.prefix === "01" ? "checked" : ""} /><span><strong>Standard (01)</strong><span class="desc">Legacy compressed P2PKH on m/0 and m/1.</span></span></label>
+      <label class="choice"><input type="radio" name="electrum-type" value="100" ${type.prefix === "100" ? "checked" : ""} /><span><strong>SegWit (100)</strong><span class="desc">Native P2WPKH on m/0h/0 and m/0h/1. Electrum's current default.</span></span></label>
+    </div>
+  </div>`;
+}
+function hodlBindElectrumGenerateControls() {
+  let toggle = document.getElementById("electrum-seed"), typeGrid = document.querySelector(".electrum-type-grid");
+  if (toggle) toggle.onchange = () => {
+    hodlElectrumGenerate = toggle.checked;
+    let state = hodlKeys[hodlActiveKey];
+    if (state) state.electrumGenerate = hodlElectrumGenerate;
+    if (typeGrid) typeGrid.hidden = !hodlElectrumGenerate;
+    hodlInvalidateLiveKeyResult();
+    hodlUpdateSeedLengthControl();
+    hodlUpdateDerivationPathPreview();
+    hodlQueueMasterFingerprintPreview(0);
+  };
+  document.querySelectorAll('input[name="electrum-type"]').forEach((radio) => {
+    radio.onchange = () => {
+      if (!radio.checked) return;
+      hodlElectrumType = radio.value === "01" ? "01" : "100";
+      let state = hodlKeys[hodlActiveKey];
+      if (state) state.electrumType = hodlElectrumType;
+      hodlInvalidateLiveKeyResult();
+      hodlUpdateSeedLengthControl();
+      hodlUpdateDerivationPathPreview();
+      hodlQueueMasterFingerprintPreview(0);
+    };
+  });
 }
 function hodlUpdateDerivationPathPreview() {
-  let panel = document.getElementById("derivation-path-preview"), list = panel?.querySelector(".derivation-path-list"), context = document.getElementById("derivation-path-context"), message = document.getElementById("derivation-path-error"), purposeInput = document.getElementById("purpose"), coinTypeInput = document.getElementById("network"), accountInput = document.getElementById("account");
+  let panel = document.getElementById("derivation-path-preview"), list = panel?.querySelector(".derivation-path-list"), context = document.getElementById("derivation-path-context"), message = document.getElementById("derivation-path-error"), purposeInput = document.getElementById("purpose"), accountInput = document.getElementById("account");
   if (!panel || !list || !context || !message) return;
   hodlUpdateKeyModeControls();
   let setPath = (name, value) => {
@@ -2180,29 +2695,15 @@ function hodlUpdateDerivationPathPreview() {
     panel.classList.remove("is-invalid");
     return;
   }
-  let purpose, coinType, account;
+  let plan;
   try {
-    purpose = hodlReadPurpose();
+    plan = hodlReadDerivationPlan();
   } catch (error) {
-    context.textContent = "Invalid purpose";
-    showMessage(error.message || "Invalid purpose.", true);
+    context.textContent = "Invalid derivation path";
+    showMessage(error.message || "Invalid derivation path.", true);
     return;
   }
-  try {
-    coinType = hodlReadCoinType(coinTypeInput);
-  } catch (error) {
-    context.textContent = "Invalid coin type";
-    showMessage(error.message || "Invalid coin type.", true);
-    return;
-  }
-  try {
-    account = hodlReadAccount();
-  } catch (error) {
-    context.textContent = "Invalid account";
-    showMessage(error.message || "Invalid account.", true);
-    return;
-  }
-  let addressWindow;
+  let addressWindow, branchWindow;
   try {
     addressWindow = hodlReadAddressWindow("", false);
   } catch (error) {
@@ -2210,42 +2711,97 @@ function hodlUpdateDerivationPathPreview() {
     showMessage(error.message || "Invalid address range.", true);
     return;
   }
-  let first = addressWindow.start, last = addressWindow.end, pathRange = (base) => first === last ? `${base}/${first}` : `${base}/${first} \u2192 ${base}/${last}`;
+  try {
+    branchWindow = hodlReadBranchWindow("", false);
+  } catch (error) {
+    context.textContent = "Invalid address branch range";
+    showMessage(error.message || "Invalid address branch range.", true);
+    return;
+  }
+  let hardening = plan.hardening, first = addressWindow.start, last = addressWindow.end, pathRange = (base) => first === last ? `${base}/${hodlPathIndex(first, hardening.address)}` : `${base}/${hodlPathIndex(first, hardening.address)} \u2192 ${base}/${hodlPathIndex(last, hardening.address)}`;
+  branchWindow.branches.forEach((branch, slot) => {
+    let row = panel.querySelector(`[data-branch-path-row="${slot}"]`), label = panel.querySelector(`[data-branch-path-label="${slot}"]`), path = panel.querySelector(`[data-path="${slot === 0 ? "receive" : "change"}"]`);
+    if (row) row.hidden = false;
+    if (label) label.textContent = hodlAddressBranchLabel(branch);
+    if (path) path.dataset.branch = String(branch);
+  });
+  for (let slot = branchWindow.branches.length; slot < 2; slot++) {
+    let row = panel.querySelector(`[data-branch-path-row="${slot}"]`);
+    if (row) row.hidden = true;
+  }
   clearMessage();
   if ((hodlImportedExtendedKeyDepth() ?? 0) > 0) {
-    context.textContent = `${definition.label} \xB7 Imported account key`;
+    context.textContent = `${definition.label} \xB7 Imported key base`;
     setPath("account", "Imported key base");
-    setPath("receive", pathRange("imported-key/0"));
-    setPath("change", pathRange("imported-key/1"));
+    branchWindow.branches.forEach((branch, slot) => setPath(slot === 0 ? "receive" : "change", pathRange(`imported-key/${hodlPathIndex(branch, hardening.branch)}`)));
     message.hidden = false;
     message.classList.add("is-note");
     message.textContent = "This non-root extended key is reused directly. Purpose and Account cannot select a different hardened sibling.";
     return;
   }
-  context.textContent = `${definition.label} \xB7 Purpose ${purpose}h`;
-  let base = `m/${purpose}h/${coinType}h/${account}h`;
+  let electrum = hodlElectrumIntent();
+  if (electrum) {
+    let base = hodlDisplayDerivationPath(electrum.accountPath || "m");
+    context.textContent = `${electrum.title} \xB7 Electrum ${base}`;
+    setPath("account", base);
+    setPath("receive", pathRange(`${base}/0`));
+    setPath("change", pathRange(`${base}/1`));
+    message.hidden = false;
+    message.classList.add("is-note");
+    message.textContent = electrum.twoFactor
+      ? "Native Electrum 2FA seed. TrustedCoin cosigner is missing; paths below are the user key alone."
+      : electrum.prefix === "100"
+        ? "Native Electrum SegWit seed. Receive m/0h/0 and change m/0h/1. This is not BIP84."
+        : "Native Electrum Standard seed. Receive m/0 and change m/1. This is not BIP44.";
+    return;
+  }
+  context.textContent = `${definition.label} \xB7 ${plan.label}`;
+  let base = plan.accountPath;
   setPath("account", base);
-  setPath("receive", pathRange(`${base}/0`));
-  setPath("change", pathRange(`${base}/1`));
+  branchWindow.branches.forEach((branch, slot) => setPath(slot === 0 ? "receive" : "change", pathRange(`${base}/${hodlPathIndex(branch, hardening.branch)}`)));
+}
+function hodlConsumeDerivationHardeningSuffix(input) {
+  let match = /^(\d+)([hH'])$/.exec(String(input?.value ?? "").trim());
+  if (!match) return false;
+  input.value = match[1];
+  let checkbox = document.getElementById(`${input.id}-harden`);
+  if (checkbox && !checkbox.checked) {
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  hodlSyncDerivationPrime(input);
+  return true;
 }
 function hodlInitDerivationControls() {
   let panel = document.getElementById("calc-card");
   if (!panel) return;
-  let purposeInput = document.getElementById("purpose"), coinTypeInput = document.getElementById("network");
-  [purposeInput, coinTypeInput].forEach((input) => {
+  document.addEventListener("input", (event) => {
+    if (event.target instanceof Element && event.target.matches(".derivation-index-value > input")) hodlSyncDerivationPrime(event.target);
+  });
+  hodlSyncDerivationPrimes();
+  let purposeInput = document.getElementById("purpose"), coinTypeInput = document.getElementById("network"), accountInput = document.getElementById("account"), scriptIndexInput = document.getElementById("scheme-script-index"), branchInput = document.getElementById("branch-start"), addressInput = document.getElementById("address-start");
+  [purposeInput, coinTypeInput, accountInput, scriptIndexInput, branchInput, addressInput].forEach((input) => {
+    input?.addEventListener("input", () => hodlConsumeDerivationHardeningSuffix(input));
     input?.addEventListener("keydown", (event) => {
       if (["e", "E", "+", "-", "."].includes(event.key)) event.preventDefault();
     });
     input?.addEventListener("paste", (event) => {
-      if (!/^\d+$/.test(event.clipboardData?.getData("text") ?? "")) event.preventDefault();
+      if (!/^\d+[hH']?$/.test((event.clipboardData?.getData("text") ?? "").trim())) event.preventDefault();
     });
   });
   panel.addEventListener("input", (event) => {
     let target = event.target;
     if (!(target instanceof Element)) return;
-    if (["purpose", "network", "account", "address-start", "address-range"].includes(target.id)) {
+    if (["purpose", "network", "account", "scheme-script-index", "branch-start", "branch-range", "address-start", "address-range", "purpose-harden", "network-harden", "account-harden", "scheme-script-index-harden", "branch-start-harden", "address-start-harden"].includes(target.id)) {
+      if (target.id === "branch-start" || target.id === "branch-range") hodlSyncBranchRangeLimit();
+      if (target.id === "address-start" || target.id === "address-range") hodlSyncAddressRangeLimit();
       let state = hodlKeys[hodlActiveKey];
-      if (state) state.fields[target.id === "network" ? "coinType" : target.id === "address-start" ? "addressStart" : target.id === "address-range" ? "addressRange" : target.id] = target.value;
+      if (state) {
+        let hardeningField = { "purpose-harden": "purposeHarden", "network-harden": "coinTypeHarden", "account-harden": "accountHarden", "scheme-script-index-harden": "schemeScriptIndexHarden", "branch-start-harden": "branchHarden", "address-start-harden": "addressHarden" }[target.id];
+        if (hardeningField) state.fields[hardeningField] = target.checked;
+        else state.fields[target.id === "network" ? "coinType" : target.id === "scheme-script-index" ? "schemeScriptIndex" : target.id === "branch-start" ? "branchStart" : target.id === "branch-range" ? "branchRange" : target.id === "address-start" ? "addressStart" : target.id === "address-range" ? "addressRange" : target.id] = target.value;
+      }
+      if (target.id.endsWith("-harden")) hodlUpdateHardeningHelp();
       if (target.id === "network") {
         hodlUpdateCoinTypeHelp(target);
         try {
@@ -2262,15 +2818,32 @@ function hodlInitDerivationControls() {
         if (seed) seed.dispatchEvent(new Event("input"));
         if (key) key.dispatchEvent(new Event("input"));
       }
+      hodlSyncKeyClearButton();
+      hodlSyncDeriveButton();
       return;
     }
-    if (target.id === "seed") hodlUpdateDerivationPathPreview();
+    if (["seed", "custom-derivation-path"].includes(target.id)) {
+      if (target.id === "custom-derivation-path") {
+        let state = hodlKeys[hodlActiveKey];
+        if (state) state.fields.customDerivationPath = target.value;
+        hodlInvalidateLiveKeyResult();
+        hodlSyncKeyClearButton();
+        hodlSyncDeriveButton();
+      }
+      hodlUpdateDerivationPathPreview();
+    }
   });
   panel.addEventListener("change", (event) => {
     let target = event.target;
     if (!(target instanceof Element)) return;
     if (target.id === "script-type") {
-      let id = hodlSetSelectedScriptType(target.value, true), purpose = hodlReadPurpose(false);
+      let scheme = hodlSelectedDerivationScheme(), id = hodlSetSelectedScriptType(target.value, !["bip48", "custom"].includes(scheme));
+      if (!["bip48", "custom"].includes(scheme)) hodlSetDerivationScheme(id);
+      if (scheme === "bip48" && ["bip49", "bip84"].includes(id)) {
+        let scriptIndex = document.getElementById("scheme-script-index");
+        if (scriptIndex) scriptIndex.value = id === "bip49" ? "1" : "2";
+      }
+      let purpose = hodlReadPurpose(false);
       if (re?.kind === "hd") {
         if (re.accounts.some((account) => account.def.id === id && account.def.purpose === purpose)) Qs(id);
         else hodlInvalidateLiveKeyResult();
@@ -2280,7 +2853,26 @@ function hodlInitDerivationControls() {
       if (seed) seed.dispatchEvent(new Event("input"));
       return;
     }
+    if (target.id === "derivation-scheme") {
+      hodlSetDerivationScheme(target.value, true);
+      hodlInvalidateLiveKeyResult();
+      hodlVanityScriptChanged();
+      document.getElementById("seed")?.dispatchEvent(new Event("input"));
+      hodlSyncKeyClearButton();
+      hodlSyncDeriveButton();
+      return;
+    }
+    if (target.id === "custom-network") {
+      let state = hodlKeys[hodlActiveKey];
+      if (state) state.fields.customNetwork = target.value;
+      hodlInvalidateLiveKeyResult();
+      document.getElementById("seed")?.dispatchEvent(new Event("input"));
+      hodlUpdateDerivationPathPreview();
+      hodlSyncKeyClearButton();
+      hodlSyncDeriveButton();
+    }
   });
+  hodlUpdateDerivationSchemeControls();
   hodlUpdateDerivationPathPreview();
 }
 function hodlSeedPhraseTokens(value, mask = false) {
@@ -2354,12 +2946,13 @@ function hodlLooksExtendedKey(value) {
 }
 function hodlSinglesigImportStatus(value, network) {
   try {
-    let parsed = uf(value), depth = parsed.node.depth;
+    let parsed = uf(value), depth = parsed.node.depth, hardening = hodlReadHardening(), plan = Ne === "key" ? null : hodlReadDerivationPlan(false), hardenedPrefix = plan ? plan.hasHardenedPrefix : hardening.purpose || hardening.coinType || hardening.account;
     if (parsed.scope !== "singlesig") return { ok: false, message: `${parsed.prefix} is a multisig export \xB7 use Multi Signature` };
     if (parsed.network !== network) return { ok: false, message: `${parsed.prefix} is for ${parsed.network} \xB7 change Network to ${parsed.network}` };
-    if (depth === 0 && !parsed.isPrivate) return { ok: false, message: "Root extended public keys cannot derive hardened account paths \xB7 import an account-level public key" };
+    if (depth === 0 && !parsed.isPrivate && (hardenedPrefix || hardening.branch || hardening.address)) return { ok: false, message: "Root extended public keys cannot derive the selected hardened path \xB7 turn every Harden option off or import a private root key offline" };
     if (depth === 0 && parsed.family !== "x") return { ok: false, message: "A root private key must use an xprv/tprv prefix" };
     if (depth !== 0 && depth !== 3) return { ok: false, message: `Depth ${depth} extended key \xB7 use a root private key or depth-3 account key` };
+    if (depth === 3 && !parsed.isPrivate && (hardening.branch || hardening.address)) return { ok: false, message: `Account extended public keys cannot derive hardened ${hardening.branch ? "address branches" : "address indexes"} \xB7 turn off the corresponding Harden option` };
     let definition = depth === 3 ? hodlImportedScriptDefinition(parsed) : null, detail = definition ? ` \xB7 ${definition.label} ${definition.bip}` : "";
     return { ok: true, message: `${parsed.prefix} ${parsed.isPrivate ? "private" : "watch-only"} key detected \xB7 ${network}${detail} \xB7 ready to derive` };
   } catch (error) {
@@ -3591,6 +4184,12 @@ function hodlTranslateSeedNumberIndex(value, toZeroIndexed) {
 function hodlSelectedSeedInput(targetWords = Pt) {
   if (hodlSeedMethod === "numbers") {
     let input = document.getElementById("seed-numbers"), parsed = hodlParseSeedNumbers(input?.value ?? "", targetWords, hodlSeedZeroIndexed);
+    if (parsed.complete) return { value: parsed.phrase, extended: false, parsed };
+    let words = parsed.wordSlots.filter(Boolean);
+    if (!parsed.invalidEntries.length && !parsed.extraEntries.length && words.length === parsed.wordSlots.length && words.length >= 12) {
+      let classified = hodlClassifyMnemonic(words.join(" "));
+      if (classified.format === "electrum") return { value: classified.words.join(" "), extended: false, parsed, electrum: classified.electrum };
+    }
     return { value: parsed.phrase, extended: false, parsed };
   }
   let value = document.getElementById("seed")?.value.trim() || "";
@@ -3644,8 +4243,8 @@ function hodlAnalyzeSeedInput(input, targetWords = Pt) {
       invalidWords.push({ index, word: token.word });
     }
   });
-  let checksumInvalid = false, allListed = tokens.length === config.words && tokens.every((token) => hodlBip39WordSet.has(token.word)), finalCanContinue = Boolean(activePrefix && finalContext?.prefix && finalContext.matchingCandidates.some((word) => word !== finalContext.prefix));
-  if (allListed && !Pn(tokens.map((token) => token.word).join(" "), Ae) && !finalCanContinue) {
+  let checksumInvalid = false, allListed = tokens.length === config.words && tokens.every((token) => hodlBip39WordSet.has(token.word)), finalCanContinue = Boolean(activePrefix && finalContext?.prefix && finalContext.matchingCandidates.some((word) => word !== finalContext.prefix)), listedPhrase = tokens.length && tokens.every((token) => hodlBip39WordSet.has(token.word)) ? tokens.map((token) => token.word).join(" ") : "";
+  if (allListed && !Pn(listedPhrase, Ae) && !detectElectrumSeed(listedPhrase) && !finalCanContinue) {
     checksumInvalid = true;
     let final = tokens[tokens.length - 1];
     invalidRanges.push([final.start, final.end]);
@@ -4598,7 +5197,7 @@ function hodlUpdateSeedLengthControl() {
     help.textContent = `${config.words} words require exactly ${format.digits} ${format.unit}.${format.remainderBits ? format.binaryRemainder ? ` Enter ${format.fullDigits} complete ${format.shortLabel} characters followed by ${format.remainderBits} coin flip${format.remainderBits === 1 ? "" : "s"}, using Heads (0) or Tails (1).` : ` The final character contributes ${format.remainderBits} bit${format.remainderBits === 1 ? "" : "s"} and must be one of ${[...format.finalCharacters].join(", ")}.` : ""}`;
     return;
   }
-  help.textContent = Ne === "seed" ? hodlSeedMethod === "numbers" ? `Enter exactly ${config.words} BIP39 word numbers using ${hodlSeedZeroIndexed ? "0 through 2047" : "1 through 2048"}.` : `Enter exactly ${config.words} BIP39 words. Extended keys ignore this selection.` : Ne === "cards" ? hodlCardMethod === "direct" ? `${config.words} words use ${config.partialWords} complete 11-bit rank selections plus ${hodlDirectCardFinalRadices(config.words).length} final rank draw${hodlDirectCardFinalRadices(config.words).length === 1 ? "" : "s"}.` : config.words === 24 ? "24 words need 256 bits. One deck is about 225.6 bits, so deal 52 unique cards, shuffle again, then deal 6 more." : `${config.words} words need ${config.bits} bits. Deal ${hodlCardNeeded(config.words).first} unique cards from one shuffled deck.` : `${config.words} words use ${config.bits} bits of BIP39 entropy.`;
+  help.textContent = Ne === "seed" ? hodlSeedMethod === "numbers" ? `Enter exactly ${config.words} BIP39 word numbers using ${hodlSeedZeroIndexed ? "0 through 2047" : "1 through 2048"}. Electrum 2.0+ seeds are accepted when the numbers form a valid Electrum phrase.` : `Enter English BIP39 words, or an Electrum 2.0+ native seed (auto-detected). Extended keys ignore this selection.` : Ne === "cards" ? hodlCardMethod === "direct" ? `${config.words} words use ${config.partialWords} complete 11-bit rank selections plus ${hodlDirectCardFinalRadices(config.words).length} final rank draw${hodlDirectCardFinalRadices(config.words).length === 1 ? "" : "s"}.` : config.words === 24 ? "24 words need 256 bits. One deck is about 225.6 bits, so deal 52 unique cards, shuffle again, then deal 6 more." : `${config.words} words need ${config.bits} bits. Deal ${hodlCardNeeded(config.words).first} unique cards from one shuffled deck.` : hodlElectrumGenerateEnabled() ? `Electrum-native 12-word seed. ${config.words} words of BIP39 entropy still mix into the hash; the ground phrase is always 12 Electrum words and will NOT restore as BIP39.` : `${config.words} words use ${config.bits} bits of BIP39 entropy.`;
 }
 function hodlInvalidateActiveKeyOutput() {
   re = null;
@@ -4676,6 +5275,7 @@ function hodlRenderKeyForm() {
         <span><strong>D++ / Direct word selection</strong><span class="desc">Roll one D8 labeled 1\u20138 and two hexadecimal D16 dice labeled 0\u2013F for each of the first ${config.partialWords} words, then ${hodlDPlusFinalDescription(config.words)} to select the valid checksum final word.</span></span>
       </label>
       </div>
+      ${hodlElectrumGenerateMarkup()}
       <p class="label" id="dice-label">${diceLabel}</p>
       <p class="muted" id="dice-help">${diceHelp}</p>
       <div class="dice-input-shell"><pre class="dice-input-highlight" id="dice-highlight" aria-hidden="true"></pre><textarea id="dice" placeholder="${dicePlaceholder}" aria-describedby="dice-help dice-meta"></textarea></div>
@@ -4731,6 +5331,7 @@ function hodlRenderKeyForm() {
     });
     hodlBindKeyFields();
     hodlRenderPassphraseKeyboard();
+    hodlBindElectrumGenerateControls();
     return;
   }
   if (Ne === "cards") {
@@ -4745,6 +5346,7 @@ function hodlRenderKeyForm() {
         <label class="choice"><input type="radio" name="card-method" value="hashed" ${direct ? "" : "checked"} /><span><strong>Hashed card transcript</strong><span class="desc">Deal unique rank-and-suit cards without replacement. SHA-256 hashes the complete transcript; ${config.words === 24 ? "58 cards across two shuffles are recommended" : `${needed.first} cards are recommended`}.</span></span></label>
         <label class="choice"><input type="radio" name="card-method" value="direct" ${direct ? "checked" : ""} /><span><strong>Direct word selection</strong><span class="desc">Ignore suits. Reshuffle and draw A\u20138, A\u20138, A\u20138, then A\u20134 for each full word. Finish with the shorter rank sequence shown for the checksum-valid final word.</span></span></label>
       </div>
+      ${hodlElectrumGenerateMarkup()}
       <p class="muted" id="cards-help">${inputHelp}</p>
       ${direct ? "" : `<label class="seed-autocomplete-toggle seed-zero-index-toggle"><input type="checkbox" id="cards-ian-coleman" ${hodlCardColemanSymbols ? "checked" : ""} /><span><strong>Match Ian Coleman method</strong> <span class="seed-autocomplete-note">(show and hash A\u2660 2\u2663 instead of AS 2C)</span></span></label>`}
       <label class="field" id="cards-input-label" for="${inputId}">${inputLabel}</label>
@@ -4822,6 +5424,7 @@ function hodlRenderKeyForm() {
       hodlUpdateCards();
     };
     hodlBindKeyFields();
+    hodlBindElectrumGenerateControls();
     direct ? hodlUpdateDirectCards() : hodlUpdateCards();
     return;
   }
@@ -4837,6 +5440,7 @@ function hodlRenderKeyForm() {
     at.innerHTML = `
       <p class="label">Number base</p>
       <div class="choice-grid entropy-format-grid">${formatChoices}</div>
+      ${hodlElectrumGenerateMarkup()}
       <div class="number-base-sync-row"><label class="seed-autocomplete-toggle number-base-sync-toggle"><input type="checkbox" id="sync-number-bases" ${syncEnabled ? "checked" : ""} /><span><strong>Sync number bases</strong> <span class="seed-autocomplete-note">(fill every format after complete valid entropy is entered)</span></span></label><span class="number-base-sync-status" id="number-base-sync-status" aria-live="polite" hidden>${hodlCopiedIconMarkup()}<span>Synced</span></span></div>
       <p class="label" id="entropy-input-label">${format.label} entropy for a ${config.words}-word seed</p>
       <p class="muted" id="entropy-input-help">Each complete ${format.shortLabel} character contributes ${format.bitsPerDigit} bit${format.bitsPerDigit === 1 ? "" : "s"}${format.binaryRemainder ? "" : " except for a mixed-radix final character when needed"}. Seed-word cards fill as enough bits arrive; the checksum-derived final word appears when all ${format.digits} characters are entered.${format.id === "bin" ? " Spaces are added every 11 bits." : ""}${remainderHelp} No generator \u2014 enter entropy you already created.</p>
@@ -4870,6 +5474,7 @@ function hodlRenderKeyForm() {
       if (!syncToggle.checked) hodlSetNumberBaseSyncStatus(false);
     };
     hodlBindKeyFields();
+    hodlBindElectrumGenerateControls();
     let entropyInput = document.getElementById(inputId);
     if (entropyInput) {
       hodlBindKeypadPointer(at.querySelectorAll("[data-entropy-digit]"), () => entropyInput);
@@ -4920,6 +5525,10 @@ function hodlRenderKeyForm() {
           let invalid = parsed.invalidEntries[0];
           meta.textContent = `${progress} · Word ${invalid.position + 1} number “${invalid.token}” is outside ${parsed.minimum}–${parsed.maximum} · correct to continue`;
           meta.className = "muted err";
+        } else if (parsed.wordSlots.length && parsed.wordSlots.every(Boolean) && detectElectrumSeed(parsed.wordSlots.join(" "))) {
+          let electrum = detectElectrumSeed(parsed.wordSlots.join(" "));
+          meta.textContent = `${parsed.wordSlots.length} words · ${electrum.title} (version ${electrum.prefix}) · ready to derive · not BIP39`;
+          meta.className = "muted ok";
         } else if (parsed.checksumInvalid) {
           meta.textContent = `${progress} · BIP39 checksum invalid · final word number highlighted`;
           meta.className = "muted err";
@@ -4932,6 +5541,7 @@ function hodlRenderKeyForm() {
         }
         hodlUpdateSeedNumberPad(input, parsed);
         hodlQueueMasterFingerprintPreview();
+        hodlUpdateDerivationPathPreview();
         return parsed;
       };
       let zeroToggle = document.getElementById("seed-zero-index");
@@ -4965,14 +5575,25 @@ function hodlRenderKeyForm() {
       update();
       return;
     }
-    at.innerHTML = `${choices}<p class="label">Your ${config.words}-word seed phrase</p><p class="muted" id="seed-help">Enter exactly ${config.words} English BIP39 words. You can also paste an extended key here; the selected phrase length does not apply to extended keys. With ${config.partialWords} compatible diceware words, choose the final checksum word below.</p><div class="seed-entry-tools">${hodlSeedKeyboardToggleMarkup()}<label class="seed-autocomplete-toggle"><input type="checkbox" id="seed-autocomplete" ${autocompleteEnabled ? "checked" : ""} /><span>Autocomplete BIP39 words <span class="seed-autocomplete-note">(2+ letters normally; 1+ for a unique checksum word)</span></span></label></div><div class="dice-input-shell seed-input-shell"><pre class="dice-input-highlight" id="seed-highlight" aria-hidden="true"></pre><textarea id="seed" placeholder="Enter exactly ${config.words} BIP39 words" aria-describedby="seed-help seed-meta" autocomplete="off" spellcheck="false" autocapitalize="off"></textarea></div><p class="muted" id="seed-meta" aria-live="polite"></p>${hodlSeedKeyboardMarkup()}<div id="last-words" class="row" style="margin-top:8px"></div>`;
+    at.innerHTML = `${choices}<p class="label">Your ${config.words}-word seed phrase</p><p class="muted" id="seed-help">Enter English BIP39 words, or an Electrum 2.0+ native seed (auto-detected). Standard Electrum restores on m/0 and m/1; SegWit Electrum on m/0h/0 and m/0h/1. You can also paste an extended key here. With ${config.partialWords} compatible diceware words, choose the final BIP39 checksum word below.</p><div class="seed-entry-tools">${hodlSeedKeyboardToggleMarkup()}<label class="seed-autocomplete-toggle"><input type="checkbox" id="seed-autocomplete" ${autocompleteEnabled ? "checked" : ""} /><span>Autocomplete BIP39 words <span class="seed-autocomplete-note">(2+ letters normally; 1+ for a unique checksum word)</span></span></label></div><div class="dice-input-shell seed-input-shell"><pre class="dice-input-highlight" id="seed-highlight" aria-hidden="true"></pre><textarea id="seed" placeholder="Enter BIP39 or Electrum words" aria-describedby="seed-help seed-meta" autocomplete="off" spellcheck="false" autocapitalize="off"></textarea></div><p class="muted" id="seed-meta" aria-live="polite"></p>${hodlSeedKeyboardMarkup()}<div id="last-words" class="row" style="margin-top:8px"></div>`;
     let input = document.getElementById("seed"), update = () => {
       let rawValue = input.value, value = rawValue.trim(), meta = W("#seed-meta"), picker = W("#last-words"), analysis = hodlRenderSeedInputState(input, config.words);
       if (hodlLooksExtendedKey(value)) {
-        let status = hodlSinglesigImportStatus(value, hodlSelectedNetwork(document.getElementById("network")));
+        let status = hodlSinglesigImportStatus(value, hodlSelectedKeyNetwork());
         picker.innerHTML = "";
         meta.textContent = status.message;
         meta.className = "muted " + (status.ok ? "ok" : "err");
+        return;
+      }
+      let classified = analysis.invalidWords.length || analysis.excessCount ? null : hodlClassifyMnemonic(analysis.tokens.map((token) => token.word).join(" "));
+      if (classified?.format === "electrum") {
+        picker.innerHTML = "";
+        let dual = classified.bip39 ? " \xB7 also BIP39-valid \u2014 restoring as Electrum, not BIP39" : "";
+        meta.textContent = `${classified.electrum.wordCount} words \xB7 ${classified.electrum.title} (version ${classified.electrum.prefix}) \xB7 ready to derive${dual}`;
+        meta.className = classified.electrum.twoFactor ? "muted err" : "muted ok";
+        hodlUpdateDerivationPathPreview();
+        hodlQueueMasterFingerprintPreview();
+        hodlQueueDeriveButtonSync();
         return;
       }
       let finalContext = analysis.finalContext, validation = hodlValidateTargetMnemonic(value, config.words), entered = analysis.tokens.length, progress = hodlSeedCountStatus(entered, config.words), remaining = Math.max(0, config.words - entered);
@@ -5077,7 +5698,7 @@ function hodlUpdateDice() {
       complete = result.complete || Boolean(selectedFinal);
     let rollPhrase = "",
       rollRange = "",
-      groupsEntered = `${result.completedGroups} of ${config.partialWords} groups entered \xB7 word ${result.activeGroupIndex+1}`,
+      groupsEntered = `Group ${result.completedGroups} of ${config.partialWords} \xB7 word ${result.activeGroupIndex+1}`,
       rollsComplete = `${config.partialWords} of ${config.partialWords} word rolls complete`;
     if (result.waiting === "d8") {
       status = groupsEntered;
@@ -5095,7 +5716,7 @@ function hodlUpdateDice() {
       let invalid = result.firstInvalid,
         specSteps = hodlDPlusFinalSteps(config.words),
         position = invalid?.final ? hodlDPlusStepChecksumLabel(specSteps[invalid.position]) : `word ${(invalid?.groupIndex??0)+1}'s ${invalid?.position===0?"D8":invalid?.position===1?"first D16":"second D16"} roll`;
-      status = `${result.completedGroups} of ${config.partialWords} groups entered \xB7 correct ${result.invalidRequiredCount} highlighted invalid result${result.invalidRequiredCount===1?"":"s"}, starting with ${position}`
+      status = `Group ${result.completedGroups} of ${config.partialWords} \xB7 correct ${result.invalidRequiredCount} highlighted invalid result${result.invalidRequiredCount===1?"":"s"}, starting with ${position}`
     } else if (selectingFinal) status = selectedFinal ? `${config.words} of ${config.words} seed words \xB7 checksum valid \xB7 ready to derive` : `${rollsComplete} \xB7 choose the final checksum word`;
     else if (result.waiting === "checksum-d8") {
       status = rollsComplete;
@@ -5350,17 +5971,17 @@ function hodlPrivateKeyInputIsValid() {
 }
 function hodlCanDeriveCurrentKey() {
   try {
-    hodlReadCoinType(document.getElementById("network"));
+    let derivationPlan = null;
     if (Ne !== "key") {
-      hodlReadPurpose();
-      hodlReadAccount();
+      derivationPlan = hodlReadDerivationPlan();
+      hodlReadBranchWindow();
       hodlReadAddressWindow();
       let passphrase = document.getElementById("pass");
       if (hodlPassphraseBip39Enabled() && passphrase?.value) {
         let passphraseAnalysis = hodlAnalyzeBip39Passphrase(passphrase.value);
         if (passphraseAnalysis.invalidRanges.length || passphraseAnalysis.incomplete || passphraseAnalysis.trailingSeparator) return false;
       }
-    }
+    } else hodlReadCoinType(document.getElementById("network"));
     if (Ne === "dice") {
       let input = document.getElementById("dice");
       if (!input) return false;
@@ -5391,8 +6012,15 @@ function hodlCanDeriveCurrentKey() {
     if (Ne === "seed") {
       let selected = hodlSelectedSeedInput(Pt), value = selected.value;
       if (!value) return false;
-      if (selected.extended) return hodlUsableSinglesigImport(value, hodlSelectedNetwork(document.getElementById("network")));
-      return hodlValidateTargetMnemonic(value, Pt).ok;
+      if (selected.extended) {
+        if (!hodlUsableSinglesigImport(value, derivationPlan?.network ?? hodlSelectedNetwork(document.getElementById("network")))) return false;
+        let parsed = uf(value);
+        if (parsed.node.depth === 0 && !parsed.isPrivate && (derivationPlan?.hasHardenedPrefix || derivationPlan?.hardening.branch || derivationPlan?.hardening.address)) return false;
+        if (hodlReadHardening().address && parsed.node.depth > 0 && !parsed.isPrivate) return false;
+        return true;
+      }
+      if (selected.electrum) return true;
+      return hodlClassifyMnemonic(value).ok;
     }
     return hodlPrivateKeyInputIsValid();
   } catch {
@@ -5421,6 +6049,11 @@ function hodlSyncDeriveButton() {
 var hodlMasterFingerprintTimer = 0, hodlMasterFingerprintRevision = 0;
 function hodlFingerprintMnemonic() {
   try {
+    let electrumPhrase = (entropy) => {
+      if (!hodlElectrumGenerateEnabled() || !entropy?.ok) return entropy?.ok ? { mnemonic: _n(entropy.bytes), format: "bip39" } : null;
+      let ground = hodlGrindElectrumFromEntropy(entropy.bytes, hodlElectrumType);
+      return { mnemonic: ground.phrase, format: "electrum" };
+    };
     if (Ne === "dice") {
       let input = document.getElementById("dice");
       if (!input) return null;
@@ -5430,7 +6063,7 @@ function hodlFingerprintMnemonic() {
           finalWord = rollsFinalWord ? parsed.finalWord : ft;
         if (!parsed.allRolledValid || parsed.invalidRequiredCount || (rollsFinalWord ? !parsed.complete : parsed.waiting !== "last-word" || !parsed.candidates.includes(finalWord))) return null;
         let validation = hodlValidateTargetMnemonic([...parsed.wordSlots, finalWord].join(" "), Pt);
-        return validation.ok ? validation.words.join(" ") : null;
+        return validation.ok ? { mnemonic: validation.words.join(" "), format: "bip39" } : null;
       }
       if (ge === "bitbox") {
         let parsed = hodlBitBoxRolls(input.value, Pt);
@@ -5438,32 +6071,26 @@ function hodlFingerprintMnemonic() {
         let possible = hodlTargetLastWords(parsed.words.join(" "), Pt);
         if (!possible?.candidates.includes(ft)) return null;
         let validation = hodlValidateTargetMnemonic([...parsed.words, ft].join(" "), Pt);
-        return validation.ok ? validation.words.join(" ") : null;
+        return validation.ok ? { mnemonic: validation.words.join(" "), format: "bip39" } : null;
       }
       if (hodlAnalyzeDiceInput(input.value, ge, Pt).coinDerivedCount) return null;
-      let entropy = hodlDiceEntropy(input.value, ge, Pt);
-      return entropy.ok ? _n(entropy.bytes) : null;
+      return electrumPhrase(hodlDiceEntropy(input.value, ge, Pt));
     }
-    if (Ne === "cards") {
-      let entropy = hodlSelectedCardsEntropy(Pt);
-      return entropy.ok ? _n(entropy.bytes) : null;
-    }
-    if (Ne === "hex") {
-      let entropy = hodlSelectedEntropy();
-      return entropy.ok ? _n(entropy.bytes) : null;
-    }
+    if (Ne === "cards") return electrumPhrase(hodlSelectedCardsEntropy(Pt));
+    if (Ne === "hex") return electrumPhrase(hodlSelectedEntropy());
     if (Ne === "seed") {
       let selected = hodlSelectedSeedInput(Pt), value = selected.value;
       if (!value || selected.extended) return null;
-      let validation = hodlValidateTargetMnemonic(value, Pt);
-      return validation.ok ? validation.words.join(" ") : null;
+      let classified = hodlClassifyMnemonic(value);
+      if (!classified.ok) return null;
+      return { mnemonic: classified.words.join(" "), format: classified.format };
     }
   } catch {
   }
   return null;
 }
-function hodlMasterFingerprint(mnemonic, passphrase = "") {
-  let seed = wi(mnemonic, passphrase);
+function hodlMasterFingerprint(mnemonic, passphrase = "", format = "bip39") {
+  let seed = format === "electrum" ? electrumMnemonicToSeed(mnemonic, passphrase) : wi(mnemonic, passphrase);
   try {
     return Us(Gt.fromMasterSeed(seed).fingerprint);
   } finally {
@@ -5507,20 +6134,20 @@ function hodlRenderMasterFingerprintPreview(revision = hodlMasterFingerprintRevi
     hodlSetMasterFingerprintCard(derivedCard, derived, "", derivedImage);
     arrow.classList.add("is-disabled");
   };
-  let mnemonic = hodlFingerprintMnemonic();
-  if (!mnemonic) {
+  let source = hodlFingerprintMnemonic();
+  if (!source?.mnemonic) {
     clear();
     return;
   }
   try {
-    hodlSetMasterFingerprintCard(baseCard, base, hodlMasterFingerprint(mnemonic), baseImage);
+    hodlSetMasterFingerprintCard(baseCard, base, hodlMasterFingerprint(source.mnemonic, "", source.format), baseImage);
   } catch {
     clear();
     return;
   }
   let value = "";
   if (pass.value.length > 0) try {
-    value = hodlMasterFingerprint(mnemonic, pass.value);
+    value = hodlMasterFingerprint(source.mnemonic, pass.value, source.format);
   } catch {
   }
   let available = hodlSetMasterFingerprintCard(derivedCard, derived, value, derivedImage);
@@ -5582,7 +6209,7 @@ async function hodlCalculateKey(progress) {
   // recovery export.
   hodlWalletDatBirthday = "genesis";
   try {
-    let coinType = hodlReadCoinType(document.getElementById("network")), network = hodlNetworkFromCoinType(coinType), addressWindow = Ne === "key" ? { start: 0, range: 1 } : hodlReadAddressWindow(), count = addressWindow.range, addressStart = addressWindow.start, passphrase = document.getElementById("pass").value, scriptType = hodlSelectedScriptType(), purpose = Ne === "key" ? 84 : hodlReadPurpose(), account = Ne === "key" ? 0 : hodlReadAccount();
+    let derivationPlan = Ne === "key" ? null : hodlReadDerivationPlan(), coinType = derivationPlan?.coinType ?? hodlReadCoinType(document.getElementById("network")), network = derivationPlan?.network ?? hodlNetworkFromCoinType(coinType), addressWindow = Ne === "key" ? { start: 0, range: 1 } : hodlReadAddressWindow(), branchWindow = Ne === "key" ? { start: 0, range: 2 } : hodlReadBranchWindow(), count = addressWindow.range, addressStart = addressWindow.start, branchStart = branchWindow.start, branchRange = branchWindow.range, passphrase = document.getElementById("pass").value, scriptType = hodlSelectedScriptType(), purpose = derivationPlan?.purpose ?? 84, account = derivationPlan?.accountIndex ?? 0, hardening = derivationPlan?.hardening ?? hodlDefaultHardening();
     if (Ne !== "key" && hodlPassphraseBip39Enabled() && passphrase) {
       let passphraseAnalysis = hodlAnalyzeBip39Passphrase(passphrase);
       if (passphraseAnalysis.invalidRanges.length || passphraseAnalysis.incomplete || passphraseAnalysis.trailingSeparator) throw new Error("Correct the highlighted BIP39-word passphrase inconsistencies before deriving.");
@@ -5614,7 +6241,7 @@ async function hodlCalculateKey(progress) {
         re = await hodlMnemonicWalletWithProgress(phrase, passphrase, network, count, {
           notes,
           warnings: parsed.warnings
-        }, account, addressStart, progress, purpose, coinType)
+        }, account, addressStart, progress, purpose, coinType, hardening, branchStart, branchRange, derivationPlan)
       } else if (ge === "bitbox") {
         let parsed = hodlBitBoxRolls(document.getElementById("dice").value, Pt);
         if (parsed.leftover) throw new Error(`Invalid characters: ${parsed.leftover}`);
@@ -5623,30 +6250,32 @@ async function hodlCalculateKey(progress) {
         if (!ft || !possible?.candidates.includes(ft)) throw new Error(`Choose one of the ${hodlSeedConfig().candidates} valid final checksum words before deriving the wallet.`);
         let phrase = [...parsed.words, ft].join(" "), validation = hodlValidateTargetMnemonic(phrase, Pt);
         if (!validation.ok) throw new Error(validation.error);
-        re = await hodlMnemonicWalletWithProgress(phrase, passphrase, network, count, { notes: parsed.notes, warnings: parsed.warnings }, account, addressStart, progress, purpose, coinType);
+        re = await hodlMnemonicWalletWithProgress(phrase, passphrase, network, count, { notes: parsed.notes, warnings: parsed.warnings }, account, addressStart, progress, purpose, coinType, hardening, branchStart, branchRange, derivationPlan);
       } else {
         let diceValue = document.getElementById("dice").value;
         if (hodlAnalyzeDiceInput(diceValue, ge, Pt).coinDerivedCount) throw new Error("Coin-button digits are entropy-equivalent only in BitBox mode. Clear them and enter fair die rolls for this conversion method.");
         let entropy = hodlDiceEntropy(diceValue, ge, Pt);
         if (!entropy.ok) throw new Error(entropy.error);
-        re = await hodlEntropyWalletWithProgress(entropy, passphrase, network, count, account, addressStart, progress, purpose, coinType);
+        re = await hodlEntropyWalletWithProgress(entropy, passphrase, network, count, account, addressStart, progress, purpose, coinType, hardening, branchStart, branchRange, derivationPlan);
       }
     } else if (Ne === "cards") {
       let entropy = hodlSelectedCardsEntropy(Pt);
       if (!entropy.ok) throw new Error(entropy.error);
-      re = await hodlEntropyWalletWithProgress(entropy, passphrase, network, count, account, addressStart, progress, purpose, coinType);
+      re = await hodlEntropyWalletWithProgress(entropy, passphrase, network, count, account, addressStart, progress, purpose, coinType, hardening, branchStart, branchRange, derivationPlan);
     } else if (Ne === "hex") {
       let entropy = hodlSelectedEntropy();
       if (!entropy.ok) throw new Error(entropy.error);
-      re = await hodlEntropyWalletWithProgress(entropy, passphrase, network, count, account, addressStart, progress, purpose, coinType);
+      re = await hodlEntropyWalletWithProgress(entropy, passphrase, network, count, account, addressStart, progress, purpose, coinType, hardening, branchStart, branchRange, derivationPlan);
     } else if (Ne === "seed") {
       let selected = hodlSelectedSeedInput(Pt), value = selected.value;
-      if (selected.extended) re = await hodlImportedWalletWithProgress(value, network, count, account, addressStart, progress, purpose, coinType);
+      if (selected.extended) re = await hodlImportedWalletWithProgress(value, network, count, account, addressStart, progress, purpose, coinType, hardening, branchStart, branchRange, derivationPlan);
       else {
-        if (hodlSeedMethod === "numbers" && !selected.parsed?.complete) throw new Error(selected.parsed?.invalidEntries.length ? `Word numbers must be between ${selected.parsed.minimum} and ${selected.parsed.maximum}.` : selected.parsed?.extraEntries.length ? `Enter exactly ${Pt} BIP39 word numbers.` : selected.parsed?.checksumInvalid ? "The entered word numbers do not have a valid BIP39 checksum." : `Enter exactly ${Pt} BIP39 word numbers before deriving the wallet.`);
-        let validation = hodlValidateTargetMnemonic(value, Pt);
-        if (!validation.ok) throw new Error(validation.error);
-        re = await hodlMnemonicWalletWithProgress(validation.words.join(" "), passphrase, network, count, void 0, account, addressStart, progress, purpose, coinType);
+        if (hodlSeedMethod === "numbers" && !selected.parsed?.complete && !selected.electrum) throw new Error(selected.parsed?.invalidEntries.length ? `Word numbers must be between ${selected.parsed.minimum} and ${selected.parsed.maximum}.` : selected.parsed?.extraEntries.length ? `Enter exactly ${Pt} BIP39 word numbers.` : selected.parsed?.checksumInvalid ? "The entered word numbers do not have a valid BIP39 checksum." : `Enter exactly ${Pt} BIP39 word numbers before deriving the wallet.`);
+        let classified = hodlClassifyMnemonic(value);
+        if (!classified.ok) throw new Error(classified.error);
+        re = classified.format === "electrum"
+          ? await hodlElectrumWalletWithProgress(classified.words.join(" "), passphrase, network, count, { classified }, addressStart, progress)
+          : await hodlMnemonicWalletWithProgress(classified.words.join(" "), passphrase, network, count, void 0, account, addressStart, progress, purpose, coinType, hardening, branchStart, branchRange, derivationPlan);
       }
     } else {
       let value = document.getElementById("key").value, kind = hodlNormalizePrivateKeyKind(document.querySelector("input[name=kk]:checked")?.value, value);
@@ -5658,7 +6287,8 @@ async function hodlCalculateKey(progress) {
     }
     if (re?.network !== network) throw new Error(`The supplied key is for ${re.network}, but Network is set to ${network}.`);
     Ge = false;
-    hodlSetSelectedScriptType(scriptType);
+    if (re?.seedFormat === "electrum") hodlAccountId = re.accounts[0]?.def.id || hodlAccountId;
+    else hodlSetSelectedScriptType(scriptType);
     tc();
     hodlFocusWalletResult();
     hodlCaptureKey();
@@ -5745,8 +6375,8 @@ function hodlOriginMatchesParsedKey(origin, parsed) {
   return "";
 }
 function hodlMultisigPurposeIndex(origin) {
-  let first = hodlNormalizeOriginPath(origin?.path).split("/").filter(Boolean)[0], match = first?.match(/^(\d+)h$/);
-  if (!match) throw new Error("The purpose index in the key origin must be hardened.");
+  let first = hodlNormalizeOriginPath(origin?.path).split("/").filter(Boolean)[0], match = first?.match(/^(\d+)h?$/);
+  if (!match) throw new Error("The purpose index in the key origin is missing or invalid.");
   let purpose = Number(match[1]);
   if (!Number.isSafeInteger(purpose) || purpose < 0 || purpose > hodlMaxPurpose) throw new Error("The purpose index in the key origin is out of range.");
   return purpose;
@@ -5763,7 +6393,10 @@ function hodlReadMsigPurpose(mark = true) {
 function hodlSetMsigPurpose(value) {
   let purpose = Number(value), input = document.getElementById("msig-purpose");
   if (!Number.isSafeInteger(purpose) || purpose < 0 || purpose > hodlMaxPurpose) purpose = 48;
-  if (input) input.value = String(purpose);
+  if (input) {
+    input.value = String(purpose);
+    hodlSyncDerivationPrime(input);
+  }
   let state = hodlMsigs[hodlActiveMsig];
   if (state) state.fields.purpose = String(purpose);
   return purpose;
@@ -5773,41 +6406,41 @@ function hodlStandardMsigPurpose(kind = hodlScriptKind()) {
   if (kind === "p2tr") return 86;
   return 48;
 }
-function hodlOriginScriptError(origin, kind, network, purpose, coinType = Rs(network)) {
+function hodlOriginScriptError(origin, kind, network, purpose, coinType = Rs(network), hardening = { purpose: true, coinType: true, account: true, address: false }) {
   let steps = hodlNormalizeOriginPath(origin.path).split("/");
-  let expectedPurpose = `${purpose}h`;
+  let expectedPurpose = `${purpose}${hardening.purpose ? "h" : ""}`;
   if (steps[0] !== expectedPurpose) return `This key origin uses purpose ${steps[0] || "none"}; the selected Purpose is ${expectedPurpose}.`;
   if (kind === "p2tr") {
-    let coin = `${coinType}h`;
+    let coin = `${coinType}${hardening.coinType ? "h" : ""}`;
     if (steps[1] !== coin) return `This key origin should use ${coin} as the selected coin type.`;
-    if (steps.length !== 3) return "Taproot origin must be purposeh/coinh/accounth.";
-    if (!/^\d+h$/.test(steps[2])) return "The account index must be hardened.";
+    if (steps.length !== 3) return "Taproot origin must contain purpose, coin type, and account.";
+    if (!new RegExp(`^\\d+${hardening.account ? "h" : ""}$`).test(steps[2])) return `The account index must be ${hardening.account ? "hardened" : "unhardened"}.`;
     return ""
   }
   if (kind === "p2wsh" || kind === "p2sh-p2wsh") {
-    let coin = `${coinType}h`;
+    let coin = `${coinType}${hardening.coinType ? "h" : ""}`;
     if (steps[1] !== coin) return `This key origin should use ${coin} as the selected coin type.`;
-    if (steps.length !== 4) return "SegWit multisig origin must be purposeh/coinh/accounth/scripth.";
-    if (!/^\d+h$/.test(steps[2])) return "The account index must be hardened.";
+    if (steps.length !== 4) return "SegWit multisig origin must contain purpose, coin type, account, and script type.";
+    if (!new RegExp(`^\\d+${hardening.account ? "h" : ""}$`).test(steps[2])) return `The account index must be ${hardening.account ? "hardened" : "unhardened"}.`;
     let last = kind === "p2wsh" ? "2h" : "1h";
     if (steps[3] !== last) return `This script type's origin must end in ${last}.`;
     return "";
   }
   if (purpose !== 45) {
-    let coin = `${coinType}h`;
+    let coin = `${coinType}${hardening.coinType ? "h" : ""}`;
     if (steps[1] !== coin) return `This key origin should use ${coin} as the selected coin type.`;
-    if (steps.length !== 3) return "Account-based Legacy origin must be purposeh/coinh/accounth.";
-    if (!/^\d+h$/.test(steps[2])) return "The account index must be hardened.";
+    if (steps.length !== 3) return "Account-based Legacy origin must contain purpose, coin type, and account.";
+    if (!new RegExp(`^\\d+${hardening.account ? "h" : ""}$`).test(steps[2])) return `The account index must be ${hardening.account ? "hardened" : "unhardened"}.`;
     return "";
   }
-  if (steps.length !== 1) return "Legacy purpose 45 uses the BIP45 purpose key at m/45h without an account.";
+  if (steps.length !== 1) return `Legacy purpose 45 uses the BIP45 purpose key at m/${expectedPurpose} without an account.`;
   return "";
 }
-function hodlMultisigAccountNumber(origin, kind, purpose) {
+function hodlMultisigAccountNumber(origin, kind, purpose, accountHardened = true) {
   let steps = hodlNormalizeOriginPath(origin?.path).split("/");
   if (kind === "p2sh" && purpose === 45) return null;
-  let match = steps[2]?.match(/^(\d+)h$/);
-  if (!match) throw new Error("The account index must be hardened.");
+  let match = steps[2]?.match(new RegExp(`^(\\d+)${accountHardened ? "h" : ""}$`));
+  if (!match) throw new Error(`The account index must be ${accountHardened ? "hardened" : "unhardened"}.`);
   let account = Number(match[1]);
   if (!Number.isSafeInteger(account) || account < 0 || account > 2147483647) throw new Error("The account index is out of range.");
   return account;
@@ -5823,9 +6456,9 @@ function hodlMultisigAccountWarning(summary) {
 function hodlMultisigOriginScriptKind(origin) {
   let steps = hodlNormalizeOriginPath(origin?.path).split("/").filter(Boolean);
   if (steps.length === 1) return "p2sh";
-  if (steps[0] === "86h" && steps.length === 3) return "p2tr";
-  if (steps[0] === "87h" && steps.length === 3) return "p2sh";
-  if (steps[0] !== "48h" || steps.length !== 4) return null;
+  if (steps[0].replace(/h$/, "") === "86" && steps.length === 3) return "p2tr";
+  if (steps[0].replace(/h$/, "") === "87" && steps.length === 3) return "p2sh";
+  if (steps[0].replace(/h$/, "") !== "48" || steps.length !== 4) return null;
   if (steps[3] === "1h") return "p2sh-p2wsh";
   if (steps[3] === "2h") return "p2wsh";
   return null;
@@ -5883,14 +6516,14 @@ function hodlUpdateMsigLegacyControls() {
   if (toggle) toggle.hidden = !legacy;
   if (checkbox) checkbox.checked = purpose === 87;
 }
-function hodlMultisigKeyPlaceholder(kind, network, purpose, coinType = Rs(network)) {
+function hodlMultisigKeyPlaceholder(kind, network, purpose, coinType = Rs(network), hardening = { purpose: true, coinType: true, account: true, address: false }) {
   let testnet = network === "testnet",
-    coin = `${coinType}h`, purposeStep = `${purpose}h`;
+    coin = `${coinType}${hardening.coinType ? "h" : ""}`, purposeStep = `${purpose}${hardening.purpose ? "h" : ""}`, account = `0${hardening.account ? "h" : ""}`;
   if (kind === "p2sh" && purpose === 45) return `[fingerprint/${purposeStep}]${testnet?"tpub":"xpub"}\u2026`;
-  if (kind === "p2sh") return `[fingerprint/${purposeStep}/${coin}/0h]${testnet?"tpub":"xpub"}\u2026`;
-  if (kind === "p2sh-p2wsh") return `[fingerprint/${purposeStep}/${coin}/0h/1h]${testnet?"Upub":"Ypub"}\u2026`;
-  if (kind === "p2wsh") return `[fingerprint/${purposeStep}/${coin}/0h/2h]${testnet?"Vpub":"Zpub"}\u2026`;
-  if (kind === "p2tr") return `[fingerprint/${purposeStep}/${coin}/0h]${testnet?"tpub":"xpub"}\u2026`;
+  if (kind === "p2sh") return `[fingerprint/${purposeStep}/${coin}/${account}]${testnet?"tpub":"xpub"}\u2026`;
+  if (kind === "p2sh-p2wsh") return `[fingerprint/${purposeStep}/${coin}/${account}/1h]${testnet?"Upub":"Ypub"}\u2026`;
+  if (kind === "p2wsh") return `[fingerprint/${purposeStep}/${coin}/${account}/2h]${testnet?"Vpub":"Zpub"}\u2026`;
+  if (kind === "p2tr") return `[fingerprint/${purposeStep}/${coin}/${account}]${testnet?"tpub":"xpub"}\u2026`;
   return "Use matching multisig extended public keys"
 }
 
@@ -5907,7 +6540,7 @@ function hodlUpdateMsigKeyPlaceholders() {
   } catch {
     purpose = hodlStandardMsigPurpose(kind);
   }
-  let placeholder = hodlMultisigKeyPlaceholder(kind, network, purpose, coinType);
+  let placeholder = hodlMultisigKeyPlaceholder(kind, network, purpose, coinType, hodlReadHardening("msig-"));
   document.querySelectorAll("#msig-keys textarea").forEach((textarea) => {
     textarea.placeholder = placeholder;
   });
@@ -6084,7 +6717,7 @@ function hodlMergeMsigXpubs(state, values) {
 function hodlUpdateMsigAccount() {
   let field = document.getElementById("msig-account");
   if (!field) return hodlSummarizeMultisigAccounts([]);
-  let kind = hodlScriptKind(), purpose, help = document.getElementById("msig-account-help"), warning = document.getElementById("msig-account-warning");
+  let kind = hodlScriptKind(), purpose, hardening = hodlReadHardening("msig-"), help = document.getElementById("msig-account-help"), warning = document.getElementById("msig-account-warning");
   try {
     purpose = hodlReadMsigPurpose(false);
   } catch {
@@ -6092,6 +6725,7 @@ function hodlUpdateMsigAccount() {
   }
   if (kind === "p2sh" && purpose === 45) {
     field.value = "";
+    hodlSyncDerivationPrime(field);
     field.placeholder = "Not applicable";
     field.dataset.state = "not-applicable";
     if (help) help.textContent = "BIP45 purpose keys do not contain an account number.";
@@ -6106,15 +6740,19 @@ function hodlUpdateMsigAccount() {
     if (!raw.trim()) continue;
     try {
       let parsed = hodlParseMultisigCosigner(raw.trim());
-      if (parsed.origin) accountNumbers.push(hodlMultisigAccountNumber(parsed.origin, kind, purpose));
+      if (parsed.origin) accountNumbers.push(hodlMultisigAccountNumber(parsed.origin, kind, purpose, hardening.account));
     } catch {
     }
   }
   let summary = hodlSummarizeMultisigAccounts(accountNumbers), message = hodlMultisigAccountWarning(summary);
   field.value = summary.mixed ? "Mixed" : summary.account == null ? "" : String(summary.account);
+  hodlSyncDerivationPrime(field);
   field.placeholder = "Derived from keys";
   field.dataset.state = summary.mixed ? "mixed" : summary.account == null ? "empty" : "account";
-  if (help) help.textContent = summary.mixed ? "Co-signer key origins use different account numbers." : summary.account == null ? "Derived from co-signer key origins." : "Derived from the co-signer account paths.";
+  if (help) {
+    let mode = hardening.account ? "Hardened" : "Unhardened";
+    help.textContent = summary.mixed ? `Account index · ${mode} · Co-signer key origins use different account numbers.` : summary.account == null ? `Account index · ${mode} · Derived from co-signer key origins.` : `Account index · ${mode} · Derived from the co-signer account paths.`;
+  }
   if (warning) {
     warning.textContent = message;
     warning.hidden = !message;
@@ -6455,10 +7093,10 @@ function hodlMultisigPrefixCompatible(parsed, kind) {
   if (kind === "p2wsh") return parsed.family === "z";
   return false;
 }
-function hodlMultisigAccountKeyError(parsed, kind, purpose) {
+function hodlMultisigAccountKeyError(parsed, kind, purpose, hardening = { purpose: true, coinType: true, account: true, address: false }) {
   if (kind === "p2tr") {
     if (parsed.depth !== 3) return `Taproot requires a depth-3 account key at m/purposeh/coinh/accounth; this key is depth ${parsed.depth}.`;
-    if (parsed.childNumber < 0x80000000) return "The account index must be hardened.";
+    if ((parsed.childNumber >= 0x80000000) !== hardening.account) return `The account index must be ${hardening.account ? "hardened" : "unhardened"}.`;
     return ""
   }
   if (kind === "p2wsh" || kind === "p2sh-p2wsh") {
@@ -6469,11 +7107,12 @@ function hodlMultisigAccountKeyError(parsed, kind, purpose) {
   }
   if (purpose !== 45) {
     if (parsed.depth !== 3) return `Account-based Legacy derivation requires a depth-3 key at m/purposeh/coinh/accounth; this key is depth ${parsed.depth}.`;
-    if (parsed.childNumber < 2147483648) return "The account index must be hardened.";
+    if ((parsed.childNumber >= 2147483648) !== hardening.account) return `The account index must be ${hardening.account ? "hardened" : "unhardened"}.`;
     return "";
   }
   if (parsed.depth !== 1) return `Legacy P2SH requires the depth-1 BIP45 purpose key at m/45h; this key is depth ${parsed.depth}.`;
-  if (parsed.childNumber !== 2147483693) return "Legacy P2SH requires the hardened BIP45 purpose child at m/45h.";
+  let expected = hardening.purpose ? 2147483693 : 45;
+  if (parsed.childNumber !== expected) return `Legacy P2SH requires the ${hardening.purpose ? "hardened" : "unhardened"} BIP45 purpose child at m/${hodlPathIndex(45, hardening.purpose)}.`;
   return "";
 }
 function hodlCanonicalMultisigKey(parsed) {
@@ -6501,17 +7140,17 @@ function hodlCheckXpub(ta) {
     return;
   }
   try {
-    let parsed = hodlParseMultisigCosigner(value), coinType = hodlReadCoinType(document.getElementById("msig-network")), network = hodlNetworkFromCoinType(coinType), kind = hodlScriptKind(), purpose = hodlReadMsigPurpose();
+    let parsed = hodlParseMultisigCosigner(value), coinType = hodlReadCoinType(document.getElementById("msig-network")), network = hodlNetworkFromCoinType(coinType), kind = hodlScriptKind(), purpose = hodlReadMsigPurpose(), hardening = hodlReadHardening("msig-");
     if (kind === "mixed") throw new Error("These keys do not define one compatible multisig policy. Use one script type.");
     if (parsed.isPrivate) throw new Error("Paste an extended public key, never an extended private key.");
     if (parsed.network !== network) throw new Error(`${parsed.prefix} is for ${parsed.network}; the multisig is set to ${network}.`);
     if (!hodlMultisigPrefixCompatible(parsed, kind)) throw new Error(parsed.scope === "singlesig" ? "Use a generic xpub/tpub here, or a proper uppercase multisig SLIP-132 export." : `${parsed.prefix} does not match the selected multisig script type.`);
-    let accountError = hodlMultisigAccountKeyError(parsed, kind, purpose);
+    let accountError = hodlMultisigAccountKeyError(parsed, kind, purpose, hardening);
     if (accountError) throw new Error(accountError);
-    if (!parsed.origin) throw new Error(`Paste ${hodlMultisigKeyPlaceholder(kind, network, purpose, coinType)} so a signer can recognize this key.`);
+    if (!parsed.origin) throw new Error(`Paste ${hodlMultisigKeyPlaceholder(kind, network, purpose, coinType, hardening)} so a signer can recognize this key.`);
     let originError = hodlOriginMatchesParsedKey(parsed.origin, parsed);
     if (originError) throw new Error(originError);
-    let scriptOriginError = hodlOriginScriptError(parsed.origin, kind, network, purpose, coinType);
+    let scriptOriginError = hodlOriginScriptError(parsed.origin, kind, network, purpose, coinType, hardening);
     if (scriptOriginError) throw new Error(scriptOriginError);
     if (hodlDuplicateMultisigKey(ta, parsed)) throw new Error("This duplicates another co-signer. Every co-signer must use a distinct extended public key.");
     hodlHint(ta, true, `${parsed.prefix} origin, checksum, and derivation path look valid`);
@@ -6532,9 +7171,13 @@ function hodlResetMsigForm() {
   let coinType = document.getElementById("msig-network");
   if (coinType) coinType.value = "0";
   hodlUpdateCoinTypeHelp(coinType, document.getElementById("msig-network-help"));
-  let addressStart = document.getElementById("msig-address-start"), addressRange = document.getElementById("msig-address-range");
+  let branchStart = document.getElementById("msig-branch-start"), branchRange = document.getElementById("msig-branch-range"), addressStart = document.getElementById("msig-address-start"), addressRange = document.getElementById("msig-address-range");
+  if (branchStart) branchStart.value = "0";
+  if (branchRange) branchRange.value = "2";
   if (addressStart) addressStart.value = "0";
   if (addressRange) addressRange.value = "5";
+  hodlSetHardeningControls("msig-");
+  hodlUpdateHardeningHelp("msig-");
   hodlUpdateAddressEstimate("msig-");
   hodlFillKeys([]);
   document.getElementById("msig-error").textContent = "";
@@ -6550,6 +7193,8 @@ function hodlInitMsig() {
     script = document.getElementById("msig-script-type"),
     purpose = document.getElementById("msig-purpose"),
     coinType = document.getElementById("msig-network"),
+    branchStartInput = document.getElementById("msig-branch-start"),
+    addressStartInput = document.getElementById("msig-address-start"),
     legacy = document.getElementById("msig-legacy-bip87"),
     keyOrder = document.getElementById("msig-key-order");
   script.addEventListener("change", () => {
@@ -6557,7 +7202,7 @@ function hodlInitMsig() {
     hodlSetMsigPurpose(hodlStandardMsigPurpose(script.value));
     recheck();
   });
-  [purpose, coinType].forEach((input) => {
+  [purpose, coinType, branchStartInput, addressStartInput].forEach((input) => {
     input?.addEventListener("keydown", (event) => {
       if (["e", "E", "+", "-", "."].includes(event.key)) event.preventDefault();
     });
@@ -6596,7 +7241,21 @@ function hodlInitMsig() {
     recheck();
     hodlSyncMsigClearButton(true);
   });
-  ["msig-address-start", "msig-address-range"].forEach((id) => document.getElementById(id)?.addEventListener("input", hodlInvalidateMsig));
+  ["msig-purpose-harden", "msig-network-harden", "msig-account-harden", "msig-branch-start-harden", "msig-address-start-harden"].forEach((id) => document.getElementById(id)?.addEventListener("change", () => {
+    hodlUpdateHardeningHelp("msig-");
+    hodlUpdateMsigKeyPlaceholders();
+    hodlUpdateMsigAccount();
+    recheck();
+    hodlSyncMsigClearButton(true);
+  }));
+  ["msig-branch-start", "msig-branch-range"].forEach((id) => document.getElementById(id)?.addEventListener("input", () => {
+    hodlSyncBranchRangeLimit("msig-");
+    hodlInvalidateMsig();
+  }));
+  ["msig-address-start", "msig-address-range"].forEach((id) => document.getElementById(id)?.addEventListener("input", () => {
+    hodlSyncAddressRangeLimit("msig-");
+    hodlInvalidateMsig();
+  }));
   hodlResetMsigForm();
   W("#msig-go").onclick = () => hodlHandleDerivationButton("msig", hodlBuildMsig);
   W("#msig-wipe").onclick = hodlWipeActiveMsig;
@@ -6660,7 +7319,9 @@ function hodlMsigAddr(pubkeys, m, network, kind, sorted = !0) {
   return { address: wrapped.address, scriptHex: M.encode(ms), kind };
 }
 function hodlValidatedMsigInputs() {
-  let coinType = hodlReadCoinType(document.getElementById("msig-network")), network = hodlNetworkFromCoinType(coinType), addressWindow = hodlReadAddressWindow("msig-"), count = addressWindow.range, addressStart = addressWindow.start, n = Number(document.getElementById("msig-n")?.value), m = Number(document.getElementById("msig-m")?.value);
+  let coinType = hodlReadCoinType(document.getElementById("msig-network")), network = hodlNetworkFromCoinType(coinType), addressWindow = hodlReadAddressWindow("msig-"), branchWindow = hodlReadBranchWindow("msig-"), count = addressWindow.range, addressStart = addressWindow.start, branchStart = branchWindow.start, branchRange = branchWindow.range, hardening = hodlReadHardening("msig-"), n = Number(document.getElementById("msig-n")?.value), m = Number(document.getElementById("msig-m")?.value);
+  if (hardening.branch) throw new Error("Hardened address branches cannot be derived from the supplied multisig extended public keys. Turn off Harden for Starting address branch index.");
+  if (hardening.address) throw new Error("Hardened address indexes cannot be derived from multisig extended public keys. Turn off Harden for Starting address index.");
   if (!(m >= 1 && n >= 1 && m <= n && n <= 15)) throw new Error("Pick how many signatures out of how many keys.");
   let kind = hodlScriptKind(), purpose = hodlReadMsigPurpose(), legacyStandard = hodlSelectedLegacyMultisigStandard(), nodes = [], xpubs = [], keyTokens = [], accountNumbers = [], purposeIndexes = [];
   if (kind === "mixed") throw new Error("Co-signer keys indicate different script types. Export every key for the same multisig script type before deriving.");
@@ -6671,15 +7332,15 @@ function hodlValidatedMsigInputs() {
     if (parsed.isPrivate) throw new Error("Co-signer " + (index + 1) + " is an extended private key. Paste only an extended public key.");
     if (parsed.network !== network) throw new Error(`Co-signer ${index + 1}'s ${parsed.prefix} is for ${parsed.network}, but this multisig is set to ${network}.`);
     if (!hodlMultisigPrefixCompatible(parsed, kind)) throw new Error(parsed.scope === "singlesig" ? `Co-signer ${index + 1} uses a singlesig ${parsed.prefix}. Use a generic ${cr[network].x.pubName}, or the proper uppercase multisig export for this script type.` : `Co-signer ${index + 1}'s ${parsed.prefix} does not match the selected multisig script type.`);
-    let accountError = hodlMultisigAccountKeyError(parsed, kind, purpose);
+    let accountError = hodlMultisigAccountKeyError(parsed, kind, purpose, hardening);
     if (accountError) throw new Error(`Co-signer ${index + 1}: ${accountError}`);
-    if (!parsed.origin) throw new Error(`Co-signer ${index + 1} needs a key origin so a signer can recognize this key. Paste ${hodlMultisigKeyPlaceholder(kind, network, purpose, coinType)} as exported by the device.`);
+    if (!parsed.origin) throw new Error(`Co-signer ${index + 1} needs a key origin so a signer can recognize this key. Paste ${hodlMultisigKeyPlaceholder(kind, network, purpose, coinType, hardening)} as exported by the device.`);
     purposeIndexes.push(hodlMultisigPurposeIndex(parsed.origin));
     let originError = hodlOriginMatchesParsedKey(parsed.origin, parsed);
     if (originError) throw new Error(`Co-signer ${index + 1}: ${originError}`);
-    let scriptOriginError = hodlOriginScriptError(parsed.origin, kind, network, purpose, coinType);
+    let scriptOriginError = hodlOriginScriptError(parsed.origin, kind, network, purpose, coinType, hardening);
     if (scriptOriginError) throw new Error(`Co-signer ${index + 1}: ${scriptOriginError}`);
-    let accountNumber = hodlMultisigAccountNumber(parsed.origin, kind, purpose);
+    let accountNumber = hodlMultisigAccountNumber(parsed.origin, kind, purpose, hardening.account);
     if (accountNumber != null) accountNumbers.push(accountNumber);
     let node = parsed.node, canonical = hodlCanonicalMultisigKey(parsed);
     if (xpubs.includes(canonical)) throw new Error(`Co-signer ${index + 1} duplicates an earlier co-signer. Every slot must use a distinct extended public key.`);
@@ -6690,7 +7351,7 @@ function hodlValidatedMsigInputs() {
   let uniquePurposes = [...new Set(purposeIndexes)];
   if (uniquePurposes.length !== 1 || uniquePurposes[0] !== purpose) throw new Error("Every co-signer purpose index must match the selected Purpose.");
   let accountSummary = hodlSummarizeMultisigAccounts(accountNumbers), accountWarning = hodlMultisigAccountWarning(accountSummary);
-  return { network, coinType, count, addressStart, n, m, kind, purpose, legacyStandard, nodes, xpubs, keyTokens, accountSummary, accountWarning };
+  return { network, coinType, count, addressStart, branchStart, branchRange, hardening, n, m, kind, purpose, legacyStandard, nodes, xpubs, keyTokens, accountSummary, accountWarning };
 }
 async function hodlBuildMsig(progress) {
   let error = document.getElementById("msig-error");
@@ -6701,10 +7362,13 @@ async function hodlBuildMsig(progress) {
       coinType,
       count,
       addressStart,
+      branchStart,
+      branchRange,
       n,
       m,
       kind,
       purpose,
+      hardening,
       legacyStandard,
       nodes,
       xpubs,
@@ -6712,47 +7376,28 @@ async function hodlBuildMsig(progress) {
       accountSummary,
       accountWarning
     } = hodlValidatedMsigInputs(), bip45 = kind === "p2sh" && legacyStandard === "bip45";
-    let receiveSuffix = bip45 ? "/0/0/*" : "/0/*",
-      changeSuffix = bip45 ? "/0/1/*" : "/1/*";
-    let sorted = hodlMsigKeysSorted(),
-      inner = keyTokens.map(key => key + receiveSuffix).join(","),
-      innerChange = keyTokens.map(key => key + changeSuffix).join(",");
-    let descriptor = hodlMsigInnerDescriptor(kind, m, inner, sorted),
-      changeDescriptor = hodlMsigInnerDescriptor(kind, m, innerChange, sorted);
-    let receive = [],
-      change = [],
-      receivePath = bip45 ? "m/0/0/" : "m/0/",
-      changePath = bip45 ? "m/0/1/" : "m/1/";
-    progress.setTotal(count * 2);
-    for (let index = addressStart; index < addressStart + count; index++) {
-      let receivePublicKeys = nodes.map((node) => {
-        let key = node.derive(receivePath + index).publicKey;
-        if (!key) throw new Error("Could not derive a public key");
-        return key;
-      });
-      let changePublicKeys = nodes.map((node) => {
-        let key = node.derive(changePath + index).publicKey;
-        if (!key) throw new Error("Could not derive a public key");
-        return key;
-      });
-      // Final defense behind the co-signer identity check: never emit a
-      // script whose public keys repeat, whatever the supplied encodings were.
-      if (new Set(receivePublicKeys.concat(changePublicKeys).map(M.encode)).size !== receivePublicKeys.length + changePublicKeys.length) throw new Error("Two co-signers derive the same public key. Every co-signer must use a distinct extended public key.");
-      receive.push(Object.assign({
-        index,
-        path: receivePath.slice(1) + index
-      }, hodlMsigAddr(receivePublicKeys, m, network, kind, sorted)));
-      let receivePause = progress.step();
-      if (receivePause) await receivePause;
-      change.push(Object.assign({
-        index,
-        path: changePath.slice(1) + index
-      }, hodlMsigAddr(changePublicKeys, m, network, kind, sorted)));
-      let changePause = progress.step();
-      if (changePause) await changePause;
+    let sorted = hodlMsigKeysSorted(), addressBranches = [];
+    progress.setTotal(count * branchRange);
+    for (let branch = branchStart; branch < branchStart + branchRange; branch++) {
+      let suffix = bip45 ? `/0/${branch}/*` : `/${branch}/*`, path = bip45 ? `m/0/${branch}/` : `m/${branch}/`, inner = keyTokens.map(key => key + suffix).join(","), descriptor = hodlMsigInnerDescriptor(kind, m, inner, sorted), rows = [];
+      for (let index = addressStart; index < addressStart + count; index++) {
+        let publicKeys = nodes.map((node) => {
+          let key = node.derive(path + index).publicKey;
+          if (!key) throw new Error("Could not derive a public key");
+          return key;
+        });
+        // Final defense behind the co-signer identity check: never emit a
+        // script whose public keys repeat, whatever the supplied encodings were.
+        if (new Set(publicKeys.map(M.encode)).size !== publicKeys.length) throw new Error("Two co-signers derive the same public key. Every co-signer must use a distinct extended public key.");
+        rows.push(Object.assign({ index, branch, role: hodlAddressBranchRole(branch), path: path.slice(1) + index }, hodlMsigAddr(publicKeys, m, network, kind, sorted)));
+        let pause = progress.step();
+        if (pause) await pause;
+      }
+      addressBranches.push({ branch, role: hodlAddressBranchRole(branch), label: hodlAddressBranchLabel(branch), publicDescriptor: Le(descriptor), privateDescriptor: null, rows });
     }
+    let receiveBranch = addressBranches.find((entry) => entry.branch === 0), changeBranch = addressBranches.find((entry) => entry.branch === 1);
     let notes = ["This is watch-only. Private keys never entered this calculator.", "Each key origin lets a signer match its seed to one co-signer.", "A signer is only needed when you spend."];
-    if (bip45) notes.push("Legacy BIP45 addresses use co-signer branch 0 for this receive and change set.");
+    if (bip45) notes.push("Legacy BIP45 addresses use co-signer branch 0 before the selected address branch.");
     if (kind === "p2sh" && legacyStandard === "bip87") notes.push("Legacy P2SH uses the selected BIP87 account paths. Keep the descriptor with every seed backup.");
     if (kind === "p2tr") notes.push("Taproot script-path multisig. The internal key is the BIP341 NUMS point, so spending is only possible through the " + (sorted ? "sortedmulti_a" : "multi_a") + " script path.");
     if (!sorted) notes.push("This wallet uses " + hodlMsigPolicyOp(kind, !1) + ", so the listed co-signer order is part of the script. Reordering keys changes addresses.");
@@ -6764,6 +7409,7 @@ async function hodlBuildMsig(progress) {
       n,
       script: kind,
       purpose,
+      hardening,
       sorted,
       scriptOrder: hodlMsigScriptOrder(keyTokens),
       scriptStandard: legacyStandard,
@@ -6771,13 +7417,16 @@ async function hodlBuildMsig(progress) {
       accountMixed: accountSummary.mixed,
       addressStart,
       addressRange: count,
+      branchStart,
+      branchRange,
       nodes,
       xpubs,
-      receiveDescriptor: Le(descriptor),
-      changeDescriptor: Le(changeDescriptor),
-      walletDescriptor: hodlWatchOnlyMultipathDescriptor(Le(descriptor)),
-      receive,
-      change,
+      addressBranches,
+      receiveDescriptor: receiveBranch?.publicDescriptor ?? null,
+      changeDescriptor: changeBranch?.publicDescriptor ?? null,
+      walletDescriptor: hodlWatchOnlyMultipathDescriptor(addressBranches[0].publicDescriptor, addressBranches.map((entry) => entry.branch)),
+      receive: receiveBranch?.rows ?? [],
+      change: changeBranch?.rows ?? [],
       notes,
       warnings: accountWarning ? [accountWarning] : []
     };
@@ -6797,36 +7446,33 @@ async function hodlBuildMsig(progress) {
 function hodlShowMsig() {
   if (!re || re.kind !== "msig") return;
   Ge = false;
-  let accountLabel = re.accountMixed ? " \xB7 Account Mixed" : re.account == null ? "" : ` \xB7 Account ${re.account}`, purposeLabel = Number.isSafeInteger(re.purpose) ? ` \xB7 Purpose ${re.purpose}h` : "", firstReceive = re.receive[0], firstIndex = firstReceive?.index ?? 0;
+  let accountLabel = re.accountMixed ? " \xB7 Account Mixed" : re.account == null ? "" : ` \xB7 Account ${re.account}`, purposeLabel = Number.isSafeInteger(re.purpose) ? ` \xB7 Purpose ${hodlOriginPathIndex(re.purpose, re.hardening?.purpose !== false)}` : "", branches = hodlAccountAddressBranches(re), firstBranch = branches[0], firstAddress = firstBranch?.rows[0], firstIndex = firstAddress?.index ?? 0, firstLabel = firstBranch ? hodlAddressBranchLabel(firstBranch.branch) : "Address";
   dr.innerHTML = `
     <section class="card account-result-card">
       <div class="kicker">${re.m}-of-${re.n} multisig${purposeLabel}${re.sorted===!1?" \xB7 listed order":""} \xB7 ${re.network}${accountLabel}</div>
-      <h2 tabindex="-1">Your multisig receive wallet</h2>
+      <h2 tabindex="-1">Your multisig wallet</h2>
       <p class="muted">Anyone can pay these addresses. Spending later needs ${re.m} signature${re.m===1?"":"s"} from the configured ${re.n} signing key${re.n===1?"":"s"}. This screen has no private keys.</p>
       ${hodlWalletMessages(re,"multisig")}
       ${re.sorted===!1&&re.scriptOrder?.length?`<section class="account-result-section" aria-labelledby="multisig-order-heading"><div class="wallet-data-section-head"><h3 id="multisig-order-heading">Script key order</h3><p class="muted">${hodlMsigPolicyOp(re.script,!1)} uses the co-signers in this order. Changing the order creates a different wallet.</p></div><ol class="msig-script-order">${re.scriptOrder.map(item=>`<li><span class="msig-script-order-position">Position ${item.position}</span><code>${$t(item.fingerprint?item.fingerprint+"/"+item.path:item.fingerprint||"")}</code></li>`).join("")}</ol></section>`:""}
       <section class="account-result-section account-watch-section" aria-labelledby="multisig-watch-heading">
         <div class="wallet-data-section-head">
           <h3 id="multisig-watch-heading">Watch-only wallet data</h3>
-          <p class="muted">These descriptors reveal every receive and change address for this multisig, but cannot authorize spending.</p>
+          <p class="muted">These descriptors reveal every address in the selected branches for this multisig, but cannot authorize spending.</p>
         </div>
-        ${hodlWatchOnlyDescriptorExport(re.receiveDescriptor, re.changeDescriptor)}
+        ${hodlWatchOnlyDescriptorExport(re.receiveDescriptor, re.changeDescriptor, branches)}
       </section>
       <section class="account-result-section account-address-section" aria-labelledby="multisig-address-heading">
         <div class="wallet-data-section-head">
           <h3 id="multisig-address-heading">Addresses</h3>
-          <p class="muted">Verify the first receive address on every signing device before accepting bitcoin.</p>
+          <p class="muted">Verify the first selected address on every signing device before accepting bitcoin.</p>
         </div>
-        ${firstReceive ? `<div class="account-address-lead"><h4 class="wallet-data-subtitle">Receive address #${firstIndex}</h4><div class="qr" aria-label="Multisig receive address ${firstIndex} QR code">${an(firstReceive.address)}</div><p class="mono">${$t(firstReceive.address)}</p><p class="muted mono">${$t(firstReceive.path)}</p></div>` : ""}
-        <h4 class="wallet-data-subtitle">Receive</h4>
-        ${hodlAddressTable(re.receive, "Multisig receive addresses", false, "msig-receive")}
-        <h4 class="wallet-data-subtitle">Change</h4>
-        ${hodlAddressTable(re.change, "Multisig change addresses", false, "msig-change")}
+        ${firstAddress ? `<div class="account-address-lead"><h4 class="wallet-data-subtitle">${$t(firstLabel)} address #${firstIndex}</h4><div class="qr" aria-label="Multisig ${$t(firstLabel.toLowerCase())} address ${firstIndex} QR code">${an(firstAddress.address)}</div><p class="mono">${$t(firstAddress.address)}</p><p class="muted mono">${$t(firstAddress.path)}</p></div>` : ""}
+        ${hodlAddressBranchTables(branches, false, "msig")}
         ${hodlAddressMatchMarkup()}
       </section>
       <p class="muted">Import the watch-only wallet descriptor into Sparrow or another wallet.</p>
     </section>`;
-  hodlBindAddressVirtualization([{ key: "msig-receive", rows: re.receive }, { key: "msig-change", rows: re.change }]);
+  hodlBindAddressVirtualization(hodlAddressBranchVirtualConfigs(branches, false, "msig"));
   hodlBindAddressMatch()
 }
 function hodlDiceCompare() {
@@ -6916,16 +7562,16 @@ function hodlB64(value) {
 }
 function hodlPsbtBytes(raw) {
   let value = raw.trim(), compact = value.replace(/\s/g, "");
-  if (!value) throw new Error("Paste a PSBT v0.");
-  if (compact.length > 7e6) throw new Error("This PSBT is too large to inspect safely.");
+  if (!value) throw new Error("Paste a PSBT v0 or a raw Bitcoin transaction.");
+  if (compact.length > 7e6) throw new Error("This file is too large to inspect safely.");
   let bytes;
   if (/^[0-9a-fA-F]+$/.test(compact) && compact.length % 2 === 0 && compact.length >= 10) bytes = M.decode(compact.toLowerCase());
   else try {
     bytes = hodlB64(compact);
   } catch {
-    throw new Error("That does not look like a PSBT in base64 or hex.");
+    throw new Error("That does not look like a PSBT or raw transaction in base64 or hex.");
   }
-  if (bytes.length > 5e6) throw new Error("This PSBT is too large to inspect safely.");
+  if (bytes.length > 5e6) throw new Error("This file is too large to inspect safely.");
   return bytes;
 }
 function hodlReadMap(bytes, offset) {
@@ -7022,7 +7668,15 @@ function hodlSats(number) {
 }
 function hodlAddr(script, network) {
   try {
-    return hodlBitcoinAddress(_s(network)).encode(Oe.decode(script));
+    let net = _s(network);
+    if (script instanceof Uint8Array) {
+      if (script.length === 22 && script[0] === 0 && script[1] === 20) return hodlBitcoinAddress(net).encode({ type: "wpkh", hash: Uint8Array.from(script.subarray(2)) });
+      if (script.length === 34 && script[0] === 0 && script[1] === 32) return hodlBitcoinAddress(net).encode({ type: "wsh", hash: Uint8Array.from(script.subarray(2)) });
+      if (script.length === 34 && script[0] === 0x51 && script[1] === 32) return hodlBitcoinAddress(net).encode({ type: "tr", pubkey: Uint8Array.from(script.subarray(2)) });
+      if (script.length === 25 && script[0] === 118 && script[1] === 169 && script[23] === 136 && script[24] === 172) return hodlBitcoinAddress(net).encode({ type: "pkh", hash: Uint8Array.from(script.subarray(3, 23)) });
+      if (script.length === 23 && script[0] === 169 && script[22] === 135) return hodlBitcoinAddress(net).encode({ type: "sh", hash: Uint8Array.from(script.subarray(2, 22)) });
+    }
+    return hodlBitcoinAddress(net).encode(Oe.decode(script));
   } catch {
     return "script " + M.encode(script);
   }
@@ -7335,8 +7989,18 @@ function hodlLoadPsbtKey(text, passphrase) {
     hf(hodlPsbtPriv);
     hodlPsbtNote = "Session key: 32-byte private key. Kept in page memory only.";
   } else {
+    try {
+      let parsed = uf(value);
+      if (parsed && parsed.isPrivate && parsed.node) {
+        hodlPsbtHd = parsed.node;
+        hodlPsbtNote = "Session key: " + (parsed.prefix || "xprv") + ". Kept in page memory only.";
+        hodlPsbtSource = "manual";
+        return;
+      }
+    } catch {
+    }
     let mnemonic = Mt(value);
-    if (!mnemonic.ok) throw new Error(mnemonic.error || "Enter a BIP39 seed phrase, WIF, or 64-character hex key.");
+    if (!mnemonic.ok) throw new Error(mnemonic.error || "Enter a BIP39 seed phrase, root xprv/tprv, WIF, or 64-character hex key.");
     let seed = wi(mnemonic.words.join(" "), passphrase || "");
     try {
       hodlPsbtHd = Gt.fromMasterSeed(seed);
@@ -7638,11 +8302,301 @@ function hodlRunPsbt() {
       document.getElementById("psbt-pass").value = "";
     }
     document.getElementById("psbt-session").textContent = hodlPsbtNote;
-    let psbt = hodlParsePsbt(hodlPsbtBytes(document.getElementById("psbt-text").value));
-    output.innerHTML = hodlRenderPsbt(psbt);
+    let bytes = hodlPsbtBytes(document.getElementById("psbt-text").value);
+    if (isPsbtMagic(bytes)) output.innerHTML = hodlRenderPsbt(hodlParsePsbt(bytes));
+    else output.innerHTML = hodlRenderRawTx(parseRawTx(bytes));
   } catch (exception) {
     error.textContent = exception instanceof Error ? exception.message : String(exception);
   }
+}
+
+var hodlSpHd = null, hodlSpKeys = null, hodlSpNote = "No session key. Receive and verify need a seed or root xprv.", hodlSpMode = "receive", hodlSpReveal = false;
+function hodlSpWipeKeys() {
+  if (hodlSpKeys) {
+    try { hodlSpKeys.scanPriv && hodlSpKeys.scanPriv.fill(0); } catch {}
+    try { hodlSpKeys.spendPriv && hodlSpKeys.spendPriv.fill(0); } catch {}
+  }
+  hodlSpKeys = null;
+  if (hodlSpHd) {
+    try { hodlSpHd.privateKey && hodlSpHd.privateKey.fill(0); } catch {}
+  }
+  hodlSpHd = null;
+  hodlSpNote = "No session key. Receive and verify need a seed or root xprv.";
+}
+function hodlSpWipeMem() {
+  hodlSpWipeKeys();
+  hodlSpReveal = false;
+}
+function hodlSpNetwork() {
+  return document.getElementById("sp-network")?.value === "testnet" ? "testnet" : "mainnet";
+}
+function hodlSpAccount() {
+  let value = Number(document.getElementById("sp-account")?.value || 0);
+  if (!Number.isInteger(value) || value < 0 || value > 0x7fffffff) throw new Error("Account index must be an integer between 0 and 2147483647.");
+  return value;
+}
+function hodlSpCoinType() {
+  return hodlSpNetwork() === "mainnet" ? 0 : 1;
+}
+function hodlSpLoadKey(text, passphrase) {
+  hodlSpWipeKeys();
+  let value = String(text || "").trim();
+  if (!value) throw new Error("Paste a BIP39 seed phrase or a BIP32 root xprv/tprv.");
+  if (/^[xt]prv[1-9A-HJ-NP-Za-km-z]+$/.test(value.replace(/\s/g, ""))) {
+    let parsed = uf(value.replace(/\s/g, ""));
+    if (!parsed.isPrivate) throw new Error("Watch-only extended keys cannot derive BIP-352 scan/spend paths.");
+    if (parsed.node.depth !== 0) throw new Error("Silent Payments needs a BIP32 root private key (depth 0), not an account xprv.");
+    hodlSpHd = parsed.node;
+    hodlSpNote = `Session key: root ${parsed.prefix}. Kept in page memory only.`;
+    return;
+  }
+  let mnemonic = Mt(value);
+  if (!mnemonic.ok) throw new Error(mnemonic.error || "Enter a BIP39 seed phrase or a BIP32 root xprv/tprv.");
+  let seed = wi(mnemonic.words.join(" "), passphrase || "");
+  try {
+    hodlSpHd = Gt.fromMasterSeed(seed);
+  } finally {
+    seed.fill(0);
+  }
+  hodlSpNote = "Session key: BIP39 seed" + (passphrase ? " + passphrase" : "") + ". Kept in page memory only.";
+}
+function hodlSpUseActiveKey() {
+  let state = hodlKeys[hodlActiveKey];
+  if (!state || !state.result) throw new Error("Generate an active key first, then return to Silent Payments.");
+  let result = state.result;
+  hodlSpWipeKeys();
+  if (result.kind === "hd" && result.mnemonic) {
+    let seed = wi(result.mnemonic, state.fields.pass || "");
+    try { hodlSpHd = Gt.fromMasterSeed(seed); } finally { seed.fill(0); }
+    hodlSpNote = "Session key from " + (state.name || "the active key") + " (BIP39 seed). Kept in page memory only.";
+  } else if (result.kind === "hd" && result.rootXprv) {
+    hodlSpHd = Gt.fromExtendedKey(uf(result.rootXprv).xkey);
+    hodlSpNote = "Session key from " + (state.name || "the active key") + " (root xprv). Kept in page memory only.";
+  } else throw new Error("Silent Payments needs the active key's seed or root xprv. Account-level and single keys cannot derive m/352'.");
+}
+function hodlSpEnsureHd() {
+  let manual = document.getElementById("sp-key")?.value;
+  if (manual && manual.trim()) {
+    hodlSpLoadKey(manual, document.getElementById("sp-pass")?.value);
+    document.getElementById("sp-key").value = "";
+    document.getElementById("sp-pass").value = "";
+  }
+  if (!hodlSpHd || !hodlSpHd.privateKey) throw new Error("Load a BIP39 seed or root xprv first (or use the active key).");
+  document.getElementById("sp-session").textContent = hodlSpNote;
+}
+function hodlSpDeriveSessionKeys() {
+  hodlSpEnsureHd();
+  if (hodlSpKeys) {
+    try { hodlSpKeys.scanPriv && hodlSpKeys.scanPriv.fill(0); } catch {}
+    try { hodlSpKeys.spendPriv && hodlSpKeys.spendPriv.fill(0); } catch {}
+  }
+  let root = hodlSpHd;
+  let scanPath = `m/352'/${hodlSpCoinType()}'/${hodlSpAccount()}'/1'/0`;
+  let spendPath = `m/352'/${hodlSpCoinType()}'/${hodlSpAccount()}'/0'/0`;
+  let scanNode = root.derive(scanPath);
+  let spendNode = root.derive(spendPath);
+  if (!scanNode.privateKey || !spendNode.privateKey) throw new Error("BIP-352 child keys are missing private material.");
+  hodlSpKeys = {
+    scanPath,
+    spendPath,
+    scanPriv: scanNode.privateKey.slice(),
+    spendPriv: spendNode.privateKey.slice(),
+    scanPub: xe.getPublicKey(scanNode.privateKey, true),
+    spendPub: xe.getPublicKey(spendNode.privateKey, true),
+    fingerprint: Us(root.fingerprint),
+  };
+}
+function hodlSpParseVins(text) {
+  let raw = String(text || "").trim();
+  if (!raw) throw new Error("Paste BIP-352 vin JSON.");
+  let parsed = JSON.parse(raw);
+  if (parsed && Array.isArray(parsed.vin)) parsed = parsed.vin;
+  if (!Array.isArray(parsed) || !parsed.length) throw new Error("Vin JSON must be a non-empty array.");
+  return parsed;
+}
+function hodlSpParseRecipients(text) {
+  let lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) throw new Error("Paste at least one silent payment address.");
+  return lines.map((line) => {
+    let match = line.match(/^(sp1[0-9a-z]+|tsp1[0-9a-z]+)(?:\s+(\d+))?$/i);
+    if (!match) throw new Error(`Not a silent payment address: ${line.slice(0, 24)}`);
+    return { address: match[1].toLowerCase(), count: match[2] ? Number(match[2]) : 1 };
+  });
+}
+function hodlSpParseOutputs(text) {
+  let raw = String(text || "").trim();
+  if (!raw) throw new Error("Paste at least one 32-byte x-only taproot output key.");
+  if (raw.startsWith("[")) {
+    let parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) throw new Error("Output JSON must be an array of hex strings.");
+    return parsed.map(String);
+  }
+  return raw.split(/\s+/).map((item) => item.replace(/^0x/i, "")).filter(Boolean);
+}
+function hodlSpParseLabels(text) {
+  let raw = String(text || "").trim();
+  if (!raw) return [];
+  return raw.split(/[,\s]+/).filter(Boolean).map((item) => {
+    let value = Number(item);
+    if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) throw new Error(`Invalid label: ${item}`);
+    return value;
+  });
+}
+function hodlSpSetMode(mode) {
+  hodlSpMode = mode;
+  ["receive", "send", "verify"].forEach((id) => {
+    let panel = document.getElementById(`sp-${id}`);
+    if (panel) panel.hidden = id !== mode;
+  });
+  document.querySelectorAll("#sp-modes [data-sp-mode]").forEach((button) => {
+    let active = button.dataset.spMode === mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+}
+function hodlSpEscape(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => {
+    if (ch === "&") return "&amp;";
+    if (ch === "<") return "&lt;";
+    if (ch === ">") return "&gt;";
+    if (ch === '"') return "&quot;";
+    return "&#39;";
+  });
+}
+function hodlSpCopyButton(id, label) {
+  return `<button type="button" class="btn secondary sp-copy" data-sp-copy="${id}">${label}</button>`;
+}
+function hodlRenderSpReceive() {
+  hodlSpDeriveSessionKeys();
+  let hrp = hodlSpHrp(hodlSpNetwork());
+  let labelField = document.getElementById("sp-label")?.value;
+  let labeled = String(labelField ?? "").trim() !== "";
+  let m = labeled ? Number(labelField) : null;
+  if (labeled && (!Number.isInteger(m) || m < 0 || m > 0xffffffff)) throw new Error("Label m must be an integer between 0 and 4294967295.");
+  let scanPoint = xe.Point.fromBytes(hodlSpKeys.scanPub);
+  let spendPoint = xe.Point.fromBytes(hodlSpKeys.spendPub);
+  let address = labeled ? createLabeledSilentPaymentAddress(hodlSpKeys.scanPriv, spendPoint, m, hrp) : encodeSilentPaymentAddress(scanPoint, spendPoint, hrp);
+  let spscan = encodeSpscan(hodlSpKeys.scanPriv, hodlSpKeys.spendPub, hodlSpNetwork());
+  let spspend = encodeSpspend(hodlSpKeys.scanPriv, hodlSpKeys.spendPriv, hodlSpNetwork());
+  let origin = `${hodlSpKeys.fingerprint}/352h/${hodlSpCoinType()}h/${hodlSpAccount()}h`;
+  let qr = an(address);
+  let secrets = hodlSpReveal;
+  document.getElementById("sp-out").innerHTML = `
+    <div class="sp-result">
+      <p class="label">Reusable silent payment address${labeled ? ` · label m = ${m}${m === 0 ? " (change)" : ""}` : ""}</p>
+      <div class="sp-qr">${qr}</div>
+      <p class="psbt-kv" id="sp-address-value">${hodlSpEscape(address)}</p>
+      ${hodlSpCopyButton("sp-address-value", "Copy address")}
+      <p class="muted">Scan path <code>${hodlSpKeys.scanPath}</code> · Spend path <code>${hodlSpKeys.spendPath}</code></p>
+      <p class="label">Scan public key</p>
+      <p class="psbt-kv" id="sp-scan-pub">${hodlSpBytesToHex(hodlSpKeys.scanPub)}</p>
+      <p class="label">Spend public key</p>
+      <p class="psbt-kv" id="sp-spend-pub">${hodlSpBytesToHex(hodlSpKeys.spendPub)}</p>
+      <label class="choice"><input type="checkbox" id="sp-reveal" ${secrets ? "checked" : ""}> <span>Reveal scan/spend private material and BIP-392 descriptors</span></label>
+      ${secrets ? `<p class="label">BIP-392 watch-only <code>spscan</code></p><p class="psbt-kv" id="sp-spscan">${hodlSpEscape(formatSpDescriptor(spscan, origin))}</p>
+        <p class="label">BIP-392 spend <code>spspend</code></p><p class="psbt-kv" id="sp-spspend">${hodlSpEscape(formatSpDescriptor(spspend, origin))}</p>
+        <p class="label">Scan private key</p><p class="psbt-kv" id="sp-scan-priv">${hodlSpBytesToHex(hodlSpKeys.scanPriv)}</p>
+        <p class="label">Spend private key</p><p class="psbt-kv" id="sp-spend-priv">${hodlSpBytesToHex(hodlSpKeys.spendPriv)}</p>` : `<p class="muted">Private scan/spend material stays hidden until you reveal it.</p>`}
+    </div>`;
+  document.getElementById("sp-reveal")?.addEventListener("change", (event) => {
+    hodlSpReveal = event.target.checked;
+    try { hodlRenderSpReceive(); } catch (error) { document.getElementById("sp-error").textContent = error.message || String(error); }
+  });
+}
+function hodlRenderSpSend() {
+  let recipients = hodlSpParseRecipients(document.getElementById("sp-recipients")?.value);
+  let hrp = hodlSpHrp(hodlSpNetwork());
+  for (const recipient of recipients) decodeSilentPaymentAddress(recipient.address, hrp);
+  let result = createSilentPaymentOutputs(hodlSpParseVins(document.getElementById("sp-send-vins")?.value), recipients, { hrp });
+  if (!result.outputs.length) {
+    document.getElementById("sp-out").innerHTML = `<p class="psbt-warn">No silent payment outputs. Eligible inputs may be missing, the private-key sum may be zero, or a scan-key group exceeded K<sub>max</sub> = 2323.</p>`;
+    return;
+  }
+  let network = hodlSpNetwork();
+  document.getElementById("sp-out").innerHTML = `<p class="psbt-ok">${result.outputs.length} unique taproot output${result.outputs.length === 1 ? "" : "s"}.</p>` + result.outputs.map((xonly, index) => {
+    let address = p2trAddressFromXonly(xonly, network);
+    return `<div class="sp-output"><p class="label">Output ${index + 1}</p><p class="psbt-kv" id="sp-out-addr-${index}">${hodlSpEscape(address)}</p><p class="psbt-kv" id="sp-out-xonly-${index}">${hodlSpEscape(xonly)}</p>${hodlSpCopyButton(`sp-out-addr-${index}`, "Copy P2TR")}</div>`;
+  }).join("");
+}
+function hodlRenderSpVerify() {
+  hodlSpDeriveSessionKeys();
+  let labels = hodlSpParseLabels(document.getElementById("sp-verify-labels")?.value);
+  let result = scanSilentPaymentOutputs({
+    scanPriv: hodlSpKeys.scanPriv,
+    spendPub: hodlSpKeys.spendPub,
+    vins: hodlSpParseVins(document.getElementById("sp-verify-vins")?.value),
+    outputs: hodlSpParseOutputs(document.getElementById("sp-verify-outputs")?.value),
+    labels,
+  });
+  if (!result.outputs.length) {
+    document.getElementById("sp-out").innerHTML = `<p class="muted">No matching silent payment outputs for this scan key and label set.</p>`;
+    return;
+  }
+  let network = hodlSpNetwork();
+  document.getElementById("sp-out").innerHTML = `<p class="psbt-ok">${result.outputs.length} matching output${result.outputs.length === 1 ? "" : "s"}.</p>` + result.outputs.map((row, index) => {
+    let address = p2trAddressFromXonly(row.pub_key, network);
+    let spend = hodlSpReveal ? hodlSpBytesToHex(spendPrivForOutput(hodlSpKeys.spendPriv, row.priv_key_tweak)) : "";
+    let labelNote = row.label === null ? "" : ` · label m = ${row.label}${row.label === 0 ? " (change)" : ""}`;
+    return `<div class="sp-output"><p class="label">Match ${index + 1}${labelNote}</p><p class="psbt-kv">${hodlSpEscape(address)}</p><p class="psbt-kv">tweak ${hodlSpEscape(row.priv_key_tweak)}</p>${hodlSpReveal ? `<p class="psbt-kv">spend key ${hodlSpEscape(spend)}</p>` : ""}</div>`;
+  }).join("") + `<label class="choice"><input type="checkbox" id="sp-reveal" ${hodlSpReveal ? "checked" : ""}> <span>Reveal spend private keys for matches</span></label>`;
+  document.getElementById("sp-reveal")?.addEventListener("change", (event) => {
+    hodlSpReveal = event.target.checked;
+    try { hodlRenderSpVerify(); } catch (error) { document.getElementById("sp-error").textContent = error.message || String(error); }
+  });
+}
+function hodlRunSp() {
+  let error = document.getElementById("sp-error"), output = document.getElementById("sp-out");
+  error.textContent = "";
+  output.innerHTML = "";
+  try {
+    if (hodlSpMode === "send") hodlRenderSpSend();
+    else if (hodlSpMode === "verify") hodlRenderSpVerify();
+    else hodlRenderSpReceive();
+  } catch (exception) {
+    error.textContent = exception instanceof Error ? exception.message : String(exception);
+  }
+}
+function hodlInitSp() {
+  if (!document.getElementById("sp-card")) return;
+  document.querySelectorAll("#sp-modes [data-sp-mode]").forEach((button) => {
+    button.onclick = () => { hodlSpSetMode(button.dataset.spMode); document.getElementById("sp-out").innerHTML = ""; document.getElementById("sp-error").textContent = ""; };
+  });
+  document.getElementById("sp-derive").onclick = () => { hodlSpMode = "receive"; hodlRunSp(); };
+  document.getElementById("sp-send-go").onclick = () => { hodlSpMode = "send"; hodlRunSp(); };
+  document.getElementById("sp-verify-go").onclick = () => { hodlSpMode = "verify"; hodlRunSp(); };
+  document.getElementById("sp-use-calc").onclick = () => {
+    document.getElementById("sp-error").textContent = "";
+    try {
+      hodlSpUseActiveKey();
+      document.getElementById("sp-key").value = "";
+      document.getElementById("sp-pass").value = "";
+      document.getElementById("sp-session").textContent = hodlSpNote;
+    } catch (exception) {
+      document.getElementById("sp-error").textContent = exception.message || String(exception);
+    }
+  };
+  document.getElementById("sp-wipe").onclick = () => {
+    hodlSpWipeMem();
+    ["sp-key", "sp-pass", "sp-recipients", "sp-send-vins", "sp-verify-vins", "sp-verify-outputs", "sp-label"].forEach((id) => {
+      let field = document.getElementById(id);
+      if (field) field.value = "";
+    });
+    let labels = document.getElementById("sp-verify-labels");
+    if (labels) labels.value = "0";
+    let account = document.getElementById("sp-account");
+    if (account) account.value = "0";
+    document.getElementById("sp-out").innerHTML = "";
+    document.getElementById("sp-error").textContent = "";
+    document.getElementById("sp-session").textContent = "Session ended and accessible fields were cleared (best effort).";
+  };
+  document.getElementById("sp-out").addEventListener("click", (event) => {
+    let button = event.target.closest?.("[data-sp-copy]");
+    if (!button) return;
+    let node = document.getElementById(button.dataset.spCopy);
+    if (!node) return;
+    navigator.clipboard?.writeText(node.textContent || "").catch(() => {});
+  });
+  hodlSpSetMode("receive");
 }
 function hodlTaggedSha256(tag, ...chunks) {
   let tagHash = Z(new TextEncoder().encode(tag)), total = 64;
@@ -7729,6 +8683,83 @@ function hodlRfc6979Compare(sighash, privateKey, r) {
   }
   return { ok: false, className: "psbt-warn", message: "Does not match plain RFC 6979 or Bitcoin Core-style low-r grind. Honest signers may add other auxiliary randomness. A mismatch alone is not evidence of compromise. Reused r on two different messages is the real alarm." };
 }
+function hodlSessionOwnership(network) {
+  if (hodlPsbtHd) return indexHdKey(hodlPsbtHd, network);
+  if (hodlPsbtPriv) return indexSingleKey(hodlPsbtPriv, network, (key, compressed) => xe.getPublicKey(key, compressed));
+  return new Map();
+}
+function hodlDeclaredOutput(entries, script, network) {
+  if (!hodlPsbtHd || !entries || !script) return null;
+  let fingerprint = Us(hodlPsbtHd.fingerprint);
+  for (let entry of hodlFind(entries, 2)) {
+    if (entry.val.length < 4 || (entry.val.length - 4) % 4) continue;
+    let fp = M.encode(entry.val.slice(0, 4));
+    let path = [];
+    for (let i = 4; i < entry.val.length; i += 4) path.push(new DataView(entry.val.buffer, entry.val.byteOffset + i, 4).getUint32(0, true));
+    let label = "m/" + pathLabel(path);
+    if (fp !== fingerprint) return { state: "other-wallet", path: label, fingerprint: fp };
+    try {
+      let node = hodlPsbtHd;
+      for (let index of path) node = node.deriveChild(index);
+      if (!node.publicKey || !hodlEq(node.publicKey, entry.keydata)) return { state: "lie", path: label };
+      let address = hodlAddr(script, network);
+      let encoded = false;
+      for (let scriptType of ["p2pkh", "p2sh-p2wpkh", "p2wpkh", "p2tr"]) {
+        try {
+          if (hodlAddressesEqual(address, pf(scriptType, node.publicKey, network))) encoded = true;
+        } catch {
+        }
+      }
+      if (!encoded) return { state: "lie", path: label };
+      let chain = path.length >= 2 ? path[path.length - 2] : null;
+      return { state: "ours", path: label, role: chain === 1 ? "change" : chain === 0 ? "receive" : "key" };
+    } catch {
+      return { state: "lie", path: label };
+    }
+  }
+  return null;
+}
+function hodlRenderOutputHtml(output, index, network, map, entries) {
+  let opReturn = parseOpReturn(output.script);
+  if (opReturn) {
+    let amount = typeof output.amount === "bigint" ? output.amount : BigInt(output.amount || 0);
+    let lines = describeOpReturn({ ...opReturn, amount, burned: amount !== 0n });
+    return "<p class='" + (opReturn.ok ? "psbt-warn" : "psbt-bad") + "'><strong>Output " + index + "</strong> \xB7 " + hodlSats(output.amount) + " BTC<br>" + lines.map($t).join("<br>") + "</p>";
+  }
+  let scan = matchOwnership(map, output.script);
+  let address = hodlAddr(output.script, network);
+  if (scan.state !== "ours") scan = matchOwnership(map, address);
+  if (scan.state === "ours" && address.startsWith("script ") && scan.address) address = scan.address;
+  let declared = null;
+  try {
+    declared = hodlDeclaredOutput(entries, output.script, network);
+  } catch {
+  }
+  let extra = "", className = "psbt-kv";
+  if (declared && declared.state === "lie") {
+    extra = "<br><strong>PSBT lies:</strong> claims " + $t(declared.path) + " but this session key does not produce this output. Do not sign.";
+    className = "psbt-bad";
+  } else if (scan.state === "ours") {
+    let label = scan.role === "change" ? "change" : scan.role === "receive" ? "receive (this wallet)" : "this session key";
+    extra = "<br>" + $t(label + " \xB7 " + scan.path);
+    className = scan.role === "change" || scan.role === "key" ? "psbt-ok" : "psbt-kv";
+  } else if (declared && declared.state === "ours") {
+    extra = "<br>" + $t((declared.role === "change" ? "change" : "this wallet") + " \xB7 " + declared.path + " (verified)");
+    className = "psbt-ok";
+  } else if (scan.state === "external") {
+    extra = "<br>not in this wallet (accounts 0\u20132, 50 receive + 50 change, four script types)";
+  } else if (scan.state === "no-session") {
+    extra = "<br><span class='muted'>Load a session key to see if this output is yours.</span>";
+  }
+  return "<p class='" + className + "'><strong>Output " + index + "</strong> \xB7 " + hodlSats(output.amount) + " BTC<br>" + $t(address) + extra + "</p>";
+}
+function hodlOwnershipWarning(outputs, network, map) {
+  if (!map || !map.size) return "";
+  let ours = outputs.some((output) => matchOwnership(map, output.script).state === "ours" || matchOwnership(map, hodlAddr(output.script, network)).state === "ours");
+  if (ours) return "<p class='muted'>Session key: outputs compared against " + map.size + " derived scripts (accounts 0\u20132, 50 receive + 50 change, four types).</p>";
+  if (outputs.length < 2) return "<p class='muted'>This output is not in the session wallet (accounts 0\u20132, 50 receive + 50 change, four script types).</p>";
+  return "<p class='psbt-bad'><strong>No output belongs to this session wallet.</strong> If you expected change, do not sign. A destination-swap can replace both the payment and the change.</p>";
+}
 function hodlRenderPsbt(psbt) {
   let network = hodlSelectedNetwork(document.getElementById("psbt-network")),
     transcript = null,
@@ -7742,15 +8773,23 @@ function hodlRenderPsbt(psbt) {
     tapSignatureCount = 0,
     ecdsaIndex = 0,
     uninspected = 0;
+  let inscriptionReport = { inputs: [], envelopes: [] };
+  try {
+    inscriptionReport = inspectPsbtInscriptions(psbt);
+  } catch {
+    inscriptionReport = { inputs: [], envelopes: [] };
+  }
   try {
     transcript = hodlParseAntiExfil(document.getElementById("psbt-ax-transcript")?.value || "");
   } catch (exception) {
     transcriptError = exception.message || String(exception);
   }
   html.push("<p class='label'>Where this transaction sends bitcoin</p>");
+  let ownershipMap = hodlSessionOwnership(network);
   tx.outputs.forEach((output, index) => {
-    html.push("<p class='psbt-kv'><strong>Output " + index + "</strong> \xB7 " + hodlSats(output.amount) + " BTC<br>" + $t(hodlAddr(output.script, network)) + "</p>");
+    html.push(hodlRenderOutputHtml(output, index, network, ownershipMap, psbt.outputs[index]));
   });
+  html.push(hodlOwnershipWarning(tx.outputs, network, ownershipMap));
   psbt.inputs.forEach((entries, index) => {
     let witnessUtxo = hodlWitUtxo(entries);
     if (witnessUtxo) {
@@ -7778,6 +8817,11 @@ function hodlRenderPsbt(psbt) {
     }
     tapSignatureCount += tapSignatures.length;
     html.push("<p class='psbt-kv'><strong>Input " + index + "</strong> \xB7 " + hodlHexRev(previous.txid) + " : " + previous.vout + (witnessUtxo ? " \xB7 " + hodlSats(witnessUtxo.amount) + " BTC claimed" : "") + "<br>" + $t(destination) + "<br>" + (signatures.length + tapSignatures.length ? signatures.length + tapSignatures.length + " signature(s) present" : finalized ? "Finalized input data present" : "Not signed yet") + (declaredSighashError ? "<br>Declared sighash policy unreadable: " + $t(declaredSighashError) : "<br>Signature policy: " + $t(declaredLabel)) + "</p>");
+    let inputEnvelopes = (inscriptionReport.inputs[index] && inscriptionReport.inputs[index].envelopes) || [];
+    inputEnvelopes.forEach((envelope) => {
+      let className = envelope.unrecognizedEven || envelope.bodyBytes > 100000 ? "psbt-bad" : "psbt-warn";
+      html.push("<p class='" + className + "'><strong>Inscription envelope</strong> \xB7 input " + index + " \xB7 #" + envelope.envelopeIndex + " \xB7 " + $t(envelope.source) + "<br>" + describeEnvelope(envelope).map($t).join("<br>") + "</p>");
+    });
     if (declaredSighashError) html.push("<p class='psbt-bad'><strong>Policy problem:</strong> input " + index + " declares a malformed sighash policy. Do not sign until its policy is known.</p>");
     else if (declaredSighash !== null && declaredSighash !== 1) html.push("<p class='psbt-bad'><strong>Policy problem:</strong> input " + index + " requests " + $t(declaredLabel) + "; that policy does not commit to all shown outputs. Do not accept the displayed outputs as what a signature will authorize.</p>");
     signatures.forEach(signature => {
@@ -7871,6 +8915,9 @@ function hodlRenderPsbt(psbt) {
     else html.push("<p class='psbt-bad'><strong>Inconsistent claimed amounts:</strong> outputs exceed claimed inputs by " + hodlSats(-fee) + " BTC.</p>");
   } else html.push("<p class='muted'>Fee unknown — some inputs do not include a claimed witness UTXO amount.</p>");
   html.push("<p class='muted'>Input amounts and any fee are unverified PSBT claims. This tool does not check them against previous transactions or the blockchain.</p>");
+  if (inscriptionReport.envelopes.length) {
+    html.push("<p class='psbt-warn'><strong>" + inscriptionReport.envelopes.length + " inscription envelope" + (inscriptionReport.envelopes.length === 1 ? "" : "s") + " in this PSBT.</strong> This is what the file reveals in witness or tap-leaf scripts. EntropyLab does not number sats, fetch content from the chain, or render binary payloads.</p>");
+  }
   html.push("<p class='label'>ECDSA nonce check</p>");
   if (transcriptError) html.push("<p class='psbt-warn'><strong>Jade anti-exfil transcript not used:</strong> " + $t(transcriptError) + "</p>");
   let {
@@ -7886,8 +8933,54 @@ function hodlRenderPsbt(psbt) {
   if (rValues.length) html.push("<p class='psbt-kv'>r values:<br>" + rValues.map(value => $t(value.hex) + " (input " + value.input + ")").join("<br>") + "</p>");
   rows.forEach(row => html.push("<p class='" + row.className + "'><strong>Input " + row.input + "</strong> pubkey " + $t(row.pubkey.slice(0, 18)) + "\u2026 \u2014 " + $t(row.message) + "</p>"));
   if (tapSignatureCount) html.push("<p class='muted'>This PSBT also contains " + tapSignatureCount + " Taproot / Schnorr signature(s). They are counted but their BIP340 nonces are not analyzed in this version.</p>");
-  html.push("<p class='muted'>RFC 6979 comparison currently covers SegWit v0 P2WPKH and P2WSH signatures using SIGHASH_ALL, including Bitcoin Core-style low-r grinding. Jade anti-exfil is secp256k1-zkp sign-to-contract and needs the USB host nonce plus signer opening; QR / sign_psbt Jade does not run it yet. BitBox anti-klepto is a different construction. Nonce reuse detection compares r values for the same secp256k1 point, including signatures carried by finalized scriptSig/witness fields, compressed and uncompressed encodings, and recoverable non-strict DER. A clean verdict is not issued when a signature cannot be inspected.</p>");
+  html.push("<p class='muted'>RFC 6979 comparison currently covers SegWit v0 P2WPKH and P2WSH signatures using SIGHASH_ALL, including Bitcoin Core-style low-r grinding. Jade anti-exfil is secp256k1-zkp sign-to-contract and needs the USB host nonce plus signer opening; QR / sign_psbt Jade does not run it yet. BitBox anti-klepto is a different construction. Nonce reuse detection compares r values for the same secp256k1 point, including signatures carried by finalized scriptSig/witness fields, compressed and uncompressed encodings, and recoverable non-strict DER. A clean verdict is not issued when a signature cannot be inspected. Inscription detection reads OP_FALSE OP_IF \"ord\" envelopes in tap-leaf scripts and finalized witnesses; it does not number sats. Output ownership is derived from the session key: accounts 0\u20132, 50 receive + 50 change, all four script types. It does not talk to the chain.</p>");
   return html.join("")
+}
+function hodlRenderRawTx(tx) {
+  let network = hodlSelectedNetwork(document.getElementById("psbt-network")),
+    html = [],
+    map = hodlSessionOwnership(network),
+    signatures = extractEcdsaSignatures(tx),
+    rValues = [],
+    uninspected = 0;
+  html.push("<p class='psbt-warn'><strong>Raw Bitcoin transaction.</strong> Not a PSBT. Input amounts and fee are unknown without previous outputs. RFC 6979 cannot be checked here. This is the last look before broadcast.</p>");
+  html.push("<p class='label'>Where this transaction sends bitcoin</p>");
+  tx.outputs.forEach((output, index) => {
+    html.push(hodlRenderOutputHtml(output, index, network, map, null));
+  });
+  html.push(hodlOwnershipWarning(tx.outputs, network, map));
+  tx.inputs.forEach((input, index) => {
+    html.push("<p class='psbt-kv'><strong>Input " + index + "</strong> \xB7 " + hodlHexRev(input.txid) + " : " + input.vout + "<br>sequence " + $t("0x" + input.sequence.toString(16)) + (input.sequence < 0xfffffffe ? " \xB7 RBF-capable" : "") + "</p>");
+  });
+  inscriptionHints(tx).forEach((hint) => {
+    html.push("<p class='psbt-warn'><strong>Inscription envelope</strong> in input " + hint.input + " (" + hint.bytes + " bytes of script/witness). This transaction reveals OP_FALSE OP_IF \"ord\" data.</p>");
+  });
+  html.push("<p class='muted'>Version " + tx.version + " \xB7 locktime " + tx.locktime + (tx.segwit ? " \xB7 segwit" : "") + ". Fee unknown \u2014 previous output amounts are not in a raw transaction.</p>");
+  html.push("<p class='label'>ECDSA nonce check</p>");
+  signatures.forEach((signature) => {
+    let parts = hodlSigParts(signature.der), looseR = parts ? parts.r : hodlDerRLoose(signature.der);
+    if (!looseR || !signature.pubkey) {
+      if (signature.der) uninspected += 1;
+      return;
+    }
+    rValues.push({
+      input: signature.input,
+      r: looseR,
+      hex: M.encode(looseR),
+      pubkey: hodlPubId(signature.pubkey),
+      sighash: null,
+      valid: null
+    });
+  });
+  let { reused, possible } = hodlCompareNonces(rValues);
+  if (reused.length || possible.length) html.push("<p class='psbt-bad'><strong>Repeated nonce r for the same public key.</strong> Message digests cannot be rebuilt from a raw transaction without prevouts, so treat this as a warning and do not broadcast until the signatures are checked independently.</p>");
+  else if (uninspected) html.push("<p class='psbt-warn'><strong>Incomplete nonce coverage.</strong> Some ECDSA signatures could not be inspected.</p>");
+  else if (rValues.length >= 2) html.push("<p class='psbt-ok'>No repeated ECDSA nonce r values were found for the same public key in this transaction.</p>");
+  else if (rValues.length === 1) html.push("<p class='muted'>Only one ECDSA signature with a readable r is present. Nonce reuse cannot be judged from this file alone.</p>");
+  else html.push("<p class='muted'>No ECDSA signatures with a readable r and public key were found.</p>");
+  if (rValues.length) html.push("<p class='psbt-kv'>r values:<br>" + rValues.map((value) => $t(value.hex) + " (input " + value.input + ")").join("<br>") + "</p>");
+  html.push("<p class='muted'>Raw-transaction inspect does not reconstruct sighashes. Paste the PSBT when you still can; use this path for a fully signed hex dump from a hardware wallet or Bitcoin Core.</p>");
+  return html.join("");
 }
 var hodlAccountId = "bip84",
   hodlNextKeyId = 1,
@@ -7915,7 +9008,7 @@ function hodlPrivateKeyValues(fields) {
 }
 function hodlNewKeyState(name, keyId, keyNumber) {
   let id = keyId ?? hodlNextKeyId++, number = keyNumber ?? hodlNextKeyNumber++;
-  return { id, number, color: hodlKeyColor(id), name: name || hodlDefaultKeyName(number), mode: "dice", diceMethod: "coldcard", cardMethod: "hashed", seedMethod: "words", seedZeroIndexed: false, cardColemanSymbols: false, entropyFormat: "bin", syncNumberBases: false, numberBaseSyncSource: "", numberBasesSynced: false, seedAutocomplete: false, passphraseBip39Words: false, brainWalletTrim: false, showCards: false, showDiceFairness: false, targetWords: 24, diceCoinPositions: [], lastWord: "", dplusLastWord: "", result: null, reveal: false, accountId: "bip84", error: "", fields: { pass: "", script: "bip84", purpose: "84", coinType: "0", network: "mainnet", account: "0", addressStart: "0", addressRange: "5", dice: "", dplusDice: "", hex: "", bin: "", base4: "", base8: "", base32: "", base64: "", cards: "", directCards: "", seed: "", seedNumbers: "", key: "", keyKind: "wif", privateKeys: { wif: "", "hex-key": "", minikey: "", brain: "" } } };
+  return { id, number, color: hodlKeyColor(id), name: name || hodlDefaultKeyName(number), mode: "dice", diceMethod: "coldcard", cardMethod: "hashed", seedMethod: "words", seedZeroIndexed: false, cardColemanSymbols: false, entropyFormat: "bin", syncNumberBases: false, numberBaseSyncSource: "", numberBasesSynced: false, seedAutocomplete: false, passphraseBip39Words: false, brainWalletTrim: false, showCards: false, showDiceFairness: false, electrumGenerate: false, electrumType: "100", targetWords: 24, diceCoinPositions: [], lastWord: "", dplusLastWord: "", result: null, reveal: false, accountId: "bip84", error: "", fields: { pass: "", script: "bip84", derivationScheme: "bip84", purpose: "84", purposeHarden: true, coinType: "0", coinTypeHarden: true, network: "mainnet", account: "0", accountHarden: true, schemeScriptIndex: "2", schemeScriptIndexHarden: true, customDerivationPath: "m/84'/0'/0'", customNetwork: "mainnet", branchStart: "0", branchHarden: false, branchRange: "2", addressStart: "0", addressHarden: false, addressRange: "5", dice: "", dplusDice: "", hex: "", bin: "", base4: "", base8: "", base32: "", base64: "", cards: "", directCards: "", seed: "", seedNumbers: "", key: "", keyKind: "wif", privateKeys: { wif: "", "hex-key": "", minikey: "", brain: "" } } };
 }
 function hodlRestoreFormFields(state) {
   if (!state) return;
@@ -7951,6 +9044,8 @@ function hodlSetMode(mode) {
   hodlSeedMethod = hodlNormalizeSeedMethod(state?.seedMethod);
   hodlSeedZeroIndexed = Boolean(state?.seedZeroIndexed);
   hodlEntropyFormat = hodlNormalizeEntropyFormat(state?.entropyFormat);
+  hodlElectrumGenerate = Boolean(state?.electrumGenerate);
+  hodlElectrumType = state?.electrumType === "01" ? "01" : "100";
   [...Zs.children].forEach((button, index) => {
     let active = hodlKeyModes[index] === Ne;
     button.classList.toggle("active", active);
@@ -7965,7 +9060,7 @@ function hodlSetMode(mode) {
 function hodlKeyStateNeedsClear(state) {
   if (!state) return false;
   let fields = state.fields || {}, privateKeys = hodlPrivateKeyValues(fields), hasText = (id) => String(fields[id] ?? "").length > 0;
-  return String(state.mode ?? "dice") !== "dice" || String(state.diceMethod ?? "coldcard") !== "coldcard" || String(state.cardMethod ?? "hashed") !== "hashed" || String(state.seedMethod ?? "words") !== "words" || Boolean(state.seedZeroIndexed) || Boolean(state.cardColemanSymbols) || String(state.entropyFormat ?? "bin") !== "bin" || Boolean(state.syncNumberBases) || Boolean(state.seedAutocomplete) || Boolean(state.passphraseBip39Words) || Boolean(state.brainWalletTrim) || Boolean(state.showCards) || Boolean(state.showDiceFairness) || Number(state.targetWords ?? 24) !== 24 || Array.isArray(state.diceCoinPositions) && state.diceCoinPositions.length > 0 || String(state.lastWord ?? "").length > 0 || String(state.dplusLastWord ?? "").length > 0 || Boolean(state.result) || Boolean(state.reveal) || String(state.error ?? "").length > 0 || String(state.accountId ?? "bip84") !== "bip84" || String(fields.script ?? "bip84") !== "bip84" || String(fields.purpose ?? "84") !== "84" || String(fields.coinType ?? (fields.network === "testnet" ? "1" : "0")) !== "0" || String(fields.account ?? "0") !== "0" || String(fields.addressStart ?? "0") !== "0" || String(fields.addressRange ?? fields.count ?? "5") !== "5" || hodlNormalizePrivateKeyKind(fields.keyKind, privateKeys[fields.keyKind] || "") !== "wif" || ["pass", "dice", "dplusDice", "hex", "bin", "base4", "base8", "base32", "base64", "cards", "directCards", "seed", "seedNumbers", "key"].some(hasText) || hodlPrivateKeyKinds.some((kind) => privateKeys[kind].length > 0);
+  return String(state.mode ?? "dice") !== "dice" || String(state.diceMethod ?? "coldcard") !== "coldcard" || String(state.cardMethod ?? "hashed") !== "hashed" || String(state.seedMethod ?? "words") !== "words" || Boolean(state.seedZeroIndexed) || Boolean(state.cardColemanSymbols) || String(state.entropyFormat ?? "bin") !== "bin" || Boolean(state.syncNumberBases) || Boolean(state.seedAutocomplete) || Boolean(state.passphraseBip39Words) || Boolean(state.brainWalletTrim) || Boolean(state.showCards) || Boolean(state.showDiceFairness) || Boolean(state.electrumGenerate) || String(state.electrumType ?? "100") !== "100" || Number(state.targetWords ?? 24) !== 24 || Array.isArray(state.diceCoinPositions) && state.diceCoinPositions.length > 0 || String(state.lastWord ?? "").length > 0 || String(state.dplusLastWord ?? "").length > 0 || Boolean(state.result) || Boolean(state.reveal) || String(state.error ?? "").length > 0 || String(state.accountId ?? "bip84") !== "bip84" || String(fields.script ?? "bip84") !== "bip84" || String(fields.derivationScheme ?? "bip84") !== "bip84" || String(fields.purpose ?? "84") !== "84" || fields.purposeHarden === false || String(fields.coinType ?? (fields.network === "testnet" ? "1" : "0")) !== "0" || fields.coinTypeHarden === false || String(fields.account ?? "0") !== "0" || fields.accountHarden === false || String(fields.schemeScriptIndex ?? "2") !== "2" || fields.schemeScriptIndexHarden === false || String(fields.customDerivationPath ?? "m/84'/0'/0'") !== "m/84'/0'/0'" || String(fields.customNetwork ?? "mainnet") !== "mainnet" || String(fields.branchStart ?? "0") !== "0" || Boolean(fields.branchHarden) || String(fields.branchRange ?? "2") !== "2" || String(fields.addressStart ?? "0") !== "0" || Boolean(fields.addressHarden) || String(fields.addressRange ?? fields.count ?? "5") !== "5" || hodlNormalizePrivateKeyKind(fields.keyKind, privateKeys[fields.keyKind] || "") !== "wif" || ["pass", "dice", "dplusDice", "hex", "bin", "base4", "base8", "base32", "base64", "cards", "directCards", "seed", "seedNumbers", "key"].some(hasText) || hodlPrivateKeyKinds.some((kind) => privateKeys[kind].length > 0);
 }
 function hodlSyncKeyClearButton(capture = false) {
   if (capture) hodlCaptureKey();
@@ -8002,6 +9097,8 @@ function hodlCaptureKey() {
   if (showCards) state.showCards = showCards.checked;
   let fairnessToggle = document.getElementById("dice-fairness-toggle");
   if (fairnessToggle) state.showDiceFairness = fairnessToggle.getAttribute("aria-expanded") === "true";
+  state.electrumGenerate = hodlElectrumGenerate;
+  state.electrumType = hodlElectrumType;
   state.targetWords = Pt;
   state.diceCoinPositions = hodlDiceCoinPositions.slice();
   if (ge === "dplus") state.dplusLastWord = ft;
@@ -8011,15 +9108,24 @@ function hodlCaptureKey() {
   state.accountId = hodlSelectedScriptType();
   state.fields.script = state.accountId;
   state.error = document.getElementById("error")?.textContent || "";
-  ["pass", "purpose", "account", "address-start", "address-range", "hex", "bin", "base4", "base8", "base32", "base64", "seed", "cards"].forEach((id) => {
+  ["pass", "purpose", "account", "scheme-script-index", "custom-derivation-path", "branch-start", "branch-range", "address-start", "address-range", "hex", "bin", "base4", "base8", "base32", "base64", "seed", "cards"].forEach((id) => {
     let el = document.getElementById(id);
-    if (el) state.fields[id === "address-start" ? "addressStart" : id === "address-range" ? "addressRange" : id] = el.value;
+    if (el) state.fields[id === "scheme-script-index" ? "schemeScriptIndex" : id === "custom-derivation-path" ? "customDerivationPath" : id === "branch-start" ? "branchStart" : id === "branch-range" ? "branchRange" : id === "address-start" ? "addressStart" : id === "address-range" ? "addressRange" : id] = el.value;
   });
   let directCards = document.getElementById("direct-cards");
   if (directCards) state.fields.directCards = directCards.value;
   let seedNumbers = document.getElementById("seed-numbers");
   if (seedNumbers) state.fields.seedNumbers = seedNumbers.value;
   state.fields.coinType = document.getElementById("network")?.value || "0";
+  state.fields.derivationScheme = hodlSelectedDerivationScheme();
+  state.fields.customNetwork = document.getElementById("custom-network")?.value || "mainnet";
+  let hardening = hodlReadHardening();
+  state.fields.purposeHarden = hardening.purpose;
+  state.fields.coinTypeHarden = hardening.coinType;
+  state.fields.accountHarden = hardening.account;
+  state.fields.schemeScriptIndexHarden = hardening.script;
+  state.fields.branchHarden = hardening.branch;
+  state.fields.addressHarden = hardening.address;
   try {
     state.fields.network = hodlSelectedNetwork(document.getElementById("network"));
   } catch {
@@ -8039,6 +9145,10 @@ function hodlSyncSelect(select, value) {
 function hodlSelectedNetwork(select) {
   return hodlNetworkFromCoinType(hodlReadCoinType(select, false));
 }
+function hodlSelectedKeyNetwork() {
+  if (Ne !== "key" && hodlSelectedDerivationScheme() === "custom") return document.getElementById("custom-network")?.value === "testnet" ? "testnet" : "mainnet";
+  return hodlSelectedNetwork(document.getElementById("network"));
+}
 function hodlRestoreKey() {
   let state = hodlKeys[hodlActiveKey];
   if (!state) {
@@ -8049,6 +9159,8 @@ function hodlRestoreKey() {
     hodlSeedZeroIndexed = false;
     hodlCardColemanSymbols = false;
     hodlEntropyFormat = "bin";
+    hodlElectrumGenerate = false;
+    hodlElectrumType = "100";
     Pt = 24;
     hodlDiceCoinPositions = [];
     ft = "";
@@ -8067,23 +9179,31 @@ function hodlRestoreKey() {
       hodlRenderPassphraseInputState(pass2, false);
     }
     hodlSyncSelect(document.getElementById("script-type"), "bip84");
+    hodlSetDerivationScheme("bip84");
     hodlSetPurpose(84);
     let network2 = document.getElementById("network");
     if (network2) network2.value = "0";
     hodlUpdateCoinTypeHelp(network2);
     let account2 = document.getElementById("account");
     if (account2) account2.value = "0";
-    let addressStart2 = document.getElementById("address-start"), addressRange2 = document.getElementById("address-range");
+    let scriptIndex2 = document.getElementById("scheme-script-index"), customPath2 = document.getElementById("custom-derivation-path");
+    if (scriptIndex2) scriptIndex2.value = "2";
+    if (customPath2) customPath2.value = "m/84'/0'/0'";
+    hodlSyncSelect(document.getElementById("custom-network"), "mainnet");
+    let branchStart2 = document.getElementById("branch-start"), branchRange2 = document.getElementById("branch-range"), addressStart2 = document.getElementById("address-start"), addressRange2 = document.getElementById("address-range");
+    if (branchStart2) branchStart2.value = "0";
+    if (branchRange2) branchRange2.value = "2";
     if (addressStart2) addressStart2.value = "0";
     if (addressRange2) addressRange2.value = "5";
+    hodlSetHardeningControls();
+    hodlUpdateHardeningHelp();
     hodlUpdateAddressEstimate();
     W("#error").textContent = "";
     dr.innerHTML = "";
     document.getElementById("calc-card").hidden = true;
     hodlQueueMasterFingerprintPreview(0);
     hodlUpdateDerivationPathPreview();
-    hodlVanitySyncScriptNote();
-    hodlVanityEstimate();
+    hodlVanityScriptChanged();
     hodlSyncKeyClearButton();
     hodlSyncDeriveButton();
     return;
@@ -8095,6 +9215,8 @@ function hodlRestoreKey() {
   hodlSeedZeroIndexed = Boolean(state.seedZeroIndexed);
   hodlCardColemanSymbols = Boolean(state.cardColemanSymbols);
   hodlEntropyFormat = hodlNormalizeEntropyFormat(state.entropyFormat);
+  hodlElectrumGenerate = Boolean(state.electrumGenerate);
+  hodlElectrumType = state.electrumType === "01" ? "01" : "100";
   Pt = hodlSeedLengths[Number(state.targetWords)] ? Number(state.targetWords) : 24;
   hodlDiceCoinPositions = hodlNormalizeDiceCoinPositions(state.diceCoinPositions);
   ft = ge === "dplus" ? state.dplusLastWord || "" : ge === "bitbox" ? state.lastWord || "" : "";
@@ -8111,6 +9233,7 @@ function hodlRestoreKey() {
   }
   hodlAccountId = state.accountId || state.fields.script || "bip84";
   hodlSyncSelect(document.getElementById("script-type"), hodlAccountId);
+  hodlSetDerivationScheme(state.fields.derivationScheme ?? hodlAccountId);
   hodlSetPurpose(state.fields.purpose ?? hodlScriptDefinition(hodlAccountId).purpose);
   state.fields.coinType = String(state.fields.coinType ?? (state.fields.network === "testnet" ? 1 : 0));
   let network = document.getElementById("network");
@@ -8118,9 +9241,17 @@ function hodlRestoreKey() {
   hodlUpdateCoinTypeHelp(network);
   let account = document.getElementById("account");
   if (account) account.value = state.fields.account ?? "0";
-  let addressStart = document.getElementById("address-start"), addressRange = document.getElementById("address-range");
+  let scriptIndex = document.getElementById("scheme-script-index"), customPath = document.getElementById("custom-derivation-path");
+  if (scriptIndex) scriptIndex.value = state.fields.schemeScriptIndex ?? "2";
+  if (customPath) customPath.value = state.fields.customDerivationPath ?? "m/84'/0'/0'";
+  hodlSyncSelect(document.getElementById("custom-network"), state.fields.customNetwork === "testnet" ? "testnet" : "mainnet");
+  let branchStart = document.getElementById("branch-start"), branchRange = document.getElementById("branch-range"), addressStart = document.getElementById("address-start"), addressRange = document.getElementById("address-range");
+  if (branchStart) branchStart.value = state.fields.branchStart ?? "0";
+  if (branchRange) branchRange.value = state.fields.branchRange ?? "2";
   if (addressStart) addressStart.value = state.fields.addressStart ?? "0";
   if (addressRange) addressRange.value = state.fields.addressRange ?? state.fields.count ?? "5";
+  hodlSetHardeningControls("", hodlHardeningFromFields(state.fields));
+  hodlUpdateHardeningHelp();
   hodlUpdateAddressEstimate();
   hodlRestoreFormFields(state);
   re = state.result;
@@ -8130,9 +9261,8 @@ function hodlRestoreKey() {
   tc();
   hodlQueueMasterFingerprintPreview(0);
   hodlUpdateDerivationPathPreview();
-  hodlVanitySyncScriptNote();
+  hodlVanityScriptChanged();
   hodlVanitySyncSaltNote();
-  hodlVanityEstimate();
   hodlSyncKeyClearButton();
   hodlSyncDeriveButton();
 }
@@ -8362,12 +9492,19 @@ function hodlNewMsigState(name, msigId, msigNumber) {
       n: "3",
       script: "p2wsh",
       purpose: "48",
+      purposeHarden: true,
       legacyBip87: !1,
       keyOrder: "sorted",
       xpubs: ["", "", ""],
       coinType: "0",
+      coinTypeHarden: true,
       network: "mainnet",
+      accountHarden: true,
+      branchStart: "0",
+      branchHarden: false,
+      branchRange: "2",
       addressStart: "0",
+      addressHarden: false,
       addressRange: "5"
     }
   }
@@ -8377,7 +9514,7 @@ function hodlMsigStateNeedsClear(state) {
   let fields = state.fields || {},
     xpubs = Array.isArray(fields.xpubs) ? fields.xpubs : [];
   return Boolean(state.result) || String(state.error ?? "").length > 0 || xpubs.some(value => String(value ?? "").length > 0) ||
-    String(fields.m ?? "2") !== "2" || String(fields.n ?? "3") !== "3" || String(fields.script ?? "p2wsh") !== "p2wsh" || String(fields.purpose ?? "48") !== "48" || Boolean(fields.legacyBip87) || String(fields.keyOrder ?? "sorted") !== "sorted" || String(fields.coinType ?? (fields.network === "testnet" ? "1" : "0")) !== "0" || String(fields.addressStart ?? "0") !== "0" || String(fields.addressRange ?? fields.count ?? "5") !== "5"
+    String(fields.m ?? "2") !== "2" || String(fields.n ?? "3") !== "3" || String(fields.script ?? "p2wsh") !== "p2wsh" || String(fields.purpose ?? "48") !== "48" || fields.purposeHarden === false || Boolean(fields.legacyBip87) || String(fields.keyOrder ?? "sorted") !== "sorted" || String(fields.coinType ?? (fields.network === "testnet" ? "1" : "0")) !== "0" || fields.coinTypeHarden === false || fields.accountHarden === false || String(fields.branchStart ?? "0") !== "0" || Boolean(fields.branchHarden) || String(fields.branchRange ?? "2") !== "2" || String(fields.addressStart ?? "0") !== "0" || Boolean(fields.addressHarden) || String(fields.addressRange ?? fields.count ?? "5") !== "5"
 }
 
 function hodlSyncMsigClearButton(capture = !1) {
@@ -8398,12 +9535,20 @@ function hodlCaptureMsig() {
   state.fields.keyOrder = hodlMsigKeysSorted() ? "sorted" : "listed";
   hodlMergeMsigXpubs(state);
   state.fields.coinType = document.getElementById("msig-network")?.value || "0";
+  let hardening = hodlReadHardening("msig-");
+  state.fields.purposeHarden = hardening.purpose;
+  state.fields.coinTypeHarden = hardening.coinType;
+  state.fields.accountHarden = hardening.account;
+  state.fields.branchHarden = hardening.branch;
+  state.fields.addressHarden = hardening.address;
   try {
     state.fields.network = hodlSelectedNetwork(document.getElementById("msig-network"));
   } catch {
   }
   state.fields.addressStart = document.getElementById("msig-address-start")?.value ?? "0";
   state.fields.addressRange = document.getElementById("msig-address-range")?.value ?? "5";
+  state.fields.branchStart = document.getElementById("msig-branch-start")?.value ?? "0";
+  state.fields.branchRange = document.getElementById("msig-branch-range")?.value ?? "2";
   state.result = re && re.kind === "msig" ? re : null;
   state.error = document.getElementById("msig-error").textContent || "";
 }
@@ -8433,9 +9578,13 @@ function hodlRestoreMsig() {
   if (coinType) coinType.value = state.fields.coinType;
   state.fields.network = hodlNetworkFromCoinType(state.fields.coinType);
   hodlUpdateCoinTypeHelp(coinType, document.getElementById("msig-network-help"));
-  let addressStart = document.getElementById("msig-address-start"), addressRange = document.getElementById("msig-address-range");
+  let branchStart = document.getElementById("msig-branch-start"), branchRange = document.getElementById("msig-branch-range"), addressStart = document.getElementById("msig-address-start"), addressRange = document.getElementById("msig-address-range");
+  if (branchStart) branchStart.value = state.fields.branchStart ?? "0";
+  if (branchRange) branchRange.value = state.fields.branchRange ?? "2";
   if (addressStart) addressStart.value = state.fields.addressStart ?? "0";
   if (addressRange) addressRange.value = state.fields.addressRange ?? state.fields.count ?? "5";
+  hodlSetHardeningControls("msig-", hodlHardeningFromFields(state.fields));
+  hodlUpdateHardeningHelp("msig-");
   hodlUpdateAddressEstimate("msig-");
   hodlFillKeys(state.fields.xpubs || []);
   document.getElementById("msig-error").textContent = state.error || "";
@@ -8590,7 +9739,36 @@ function hodlDeleteActiveMsig() {
   hodlRestoreMsig();
   (hodlActiveMsig >= 0 ? W("#msig-tabs").children[hodlActiveMsig] : W("#add-msig"))?.focus();
 }
+function hodlSetWorkspaceMenu(open, restoreFocus = false) {
+  let shell = document.querySelector(".workspace-shell"), toggle = W("#workspace-menu-toggle"), backdrop = W("#workspace-backdrop");
+  if (!shell || !toggle || !backdrop) return;
+  let isOpen = Boolean(open && matchMedia("(max-width: 899px)").matches);
+  shell.classList.toggle("is-menu-open", isOpen);
+  document.documentElement.classList.toggle("workspace-menu-open", isOpen);
+  document.body.classList.toggle("workspace-menu-open", isOpen);
+  toggle.setAttribute("aria-expanded", String(isOpen));
+  backdrop.hidden = !isOpen;
+  if (isOpen) requestAnimationFrame(() => W("#workspace").querySelector('.tab[aria-pressed="true"]')?.focus({ preventScroll: true }));
+  else if (restoreFocus && toggle.offsetParent !== null) toggle.focus({ preventScroll: true });
+}
+function hodlCloseWorkspaceMenu(restoreFocus = false) {
+  hodlSetWorkspaceMenu(false, restoreFocus);
+}
+function hodlInitWorkspaceMenu() {
+  let toggle = W("#workspace-menu-toggle"), close = W("#workspace-menu-close"), backdrop = W("#workspace-backdrop");
+  toggle.onclick = () => hodlSetWorkspaceMenu(toggle.getAttribute("aria-expanded") !== "true");
+  close.onclick = () => hodlCloseWorkspaceMenu(true);
+  backdrop.onclick = () => hodlCloseWorkspaceMenu(true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || toggle.getAttribute("aria-expanded") !== "true") return;
+    event.preventDefault();
+    hodlCloseWorkspaceMenu(true);
+  });
+  matchMedia("(max-width: 899px)").addEventListener?.("change", () => hodlCloseWorkspaceMenu());
+}
 function hodlShowWorkspace(id) {
+  let activeButton = W("#workspace").querySelector(`[data-workspace="${id}"]`), current = W("#workspace-menu-current");
+  if (current && activeButton) current.textContent = activeButton.textContent;
   if (id === hodlWorkspace) return;
   let preservedTop = window.scrollY, preservedLeft = window.scrollX;
   if (hodlWorkspace === "calc") {
@@ -8603,12 +9781,16 @@ function hodlShowWorkspace(id) {
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   });
+  document.querySelectorAll("[data-workspace-heading]").forEach((heading) => {
+    heading.hidden = heading.dataset.workspaceHeading !== id;
+  });
   document.getElementById("key-manager").hidden = id !== "calc";
   document.getElementById("msig-manager").hidden = id !== "msig";
   document.getElementById("calc-card").hidden = true;
   document.getElementById("msig-card").hidden = true;
   document.getElementById("psbt-card").hidden = id !== "psbt";
   document.getElementById("bip85-card").hidden = id !== "bip85";
+  document.getElementById("sp-card").hidden = id !== "sp";
   re = null;
   Ge = false;
   dr.innerHTML = "";
@@ -8823,7 +10005,13 @@ function hodlVanityClearResults(status = "Results cleared (best effort).") {
   hodlVanitySetStatus(status);
   hodlVanitySyncControls();
 }
+// The derivation-scheme select can also switch the script type, so every
+// entry point funnels here; only an actual script change stops a grind.
+var hodlVanityScriptKnown = "";
 function hodlVanityScriptChanged() {
+  let id = hodlVanityScriptId();
+  if (id === hodlVanityScriptKnown) return;
+  hodlVanityScriptKnown = id;
   hodlVanityCancel();
   let input = document.getElementById("vanity-prefix");
   if (input) hodlApplyFilteredInput(input, (value) => hodlFilterVanityPrefix(value));
@@ -8909,6 +10097,7 @@ function hodlInitVanity() {
     if (id === "pass" || hodlVanitySaltFields.includes(id)) hodlVanitySyncSaltNote();
   });
   document.getElementById("vanity-card")?.addEventListener("toggle", hodlVanitySyncSaltNote);
+  hodlVanityScriptKnown = hodlVanityScriptId();
   hodlVanitySyncScriptNote();
   hodlVanitySyncSaltNote();
   hodlVanityEstimate();
@@ -8917,20 +10106,25 @@ function hodlInitVanity() {
 function hodlInitWorkspace() {
   let box = W("#workspace");
   box.innerHTML = "";
-  [["calc", "Key Derivation"], ["bip85", "BIP-85"], ["msig", "Multi Signature"], ["psbt", "PSBT / Nonce"]].forEach(([id, label]) => {
+  [["calc", "Key Derivation"], ["bip85", "BIP-85"], ["msig", "Multi Signature"], ["sp", "Silent Payments"], ["psbt", "PSBT / Nonce"]].forEach(([id, label]) => {
     let button = document.createElement("button"), active = hodlWorkspace === id;
     button.type = "button";
     button.className = "tab" + (active ? " active" : "");
     button.dataset.workspace = id;
     button.setAttribute("aria-pressed", String(active));
     button.textContent = label;
-    button.onclick = () => hodlShowWorkspace(id);
+    button.onclick = () => {
+      hodlShowWorkspace(id);
+      hodlCloseWorkspaceMenu(true);
+    };
     box.appendChild(button);
   });
+  hodlInitWorkspaceMenu();
   hodlInitMsig();
   hodlInitPsbt();
   hodlInitBip85();
   hodlInitVanity();
+  hodlInitSp();
 }
 var hodlKeyClearSyncQueued = false, hodlMsigClearSyncQueued = false, hodlDeriveSyncQueued = false;
 function hodlQueueKeyClearButtonSync() {
@@ -8968,16 +10162,52 @@ function hodlInitClearActionState() {
   hodlSyncMsigClearButton();
   hodlSyncDeriveButton();
 }
-var hodlSegmentedControlFrame = 0, hodlSegmentedResizeObserver = null, hodlSegmentedControlWidths = /* @__PURE__ */ new WeakMap();
+var hodlSegmentedControlFrame = 0, hodlSegmentedResizeObserver = null, hodlSegmentedControlWidths = /* @__PURE__ */ new WeakMap(), hodlSegmentedSelects = /* @__PURE__ */ new WeakMap();
+function hodlSegmentedControlButtons(group) {
+  return [...group.children].filter((child) => child.matches(".tab"));
+}
+function hodlSyncSegmentedControlSelect(group) {
+  let select = hodlSegmentedSelects.get(group);
+  if (!select) return;
+  let buttons = hodlSegmentedControlButtons(group);
+  if (select.options.length !== buttons.length) {
+    select.replaceChildren(...buttons.map((button, index) => new Option(button.textContent.trim(), String(index))));
+  }
+  buttons.forEach((button, index) => {
+    select.options[index].textContent = button.textContent.trim();
+    select.options[index].disabled = button.disabled;
+  });
+  let activeIndex = buttons.findIndex((button) => button.getAttribute("aria-pressed") === "true" || button.classList.contains("active"));
+  select.value = String(Math.max(0, activeIndex));
+  select.dispatchEvent(new Event("entropylab:sync-select"));
+}
+function hodlEnsureSegmentedControlSelect(group) {
+  let existing = hodlSegmentedSelects.get(group);
+  if (existing) return existing;
+  let select = document.createElement("select");
+  select.className = "segmented-control-select";
+  select.setAttribute("aria-label", group.getAttribute("aria-label") || "Selection");
+  select.onchange = () => {
+    hodlSegmentedControlButtons(group)[Number(select.value)]?.click();
+    hodlSyncSegmentedControlSelect(group);
+  };
+  group.after(select);
+  hodlSegmentedSelects.set(group, select);
+  new MutationObserver(() => hodlSyncSegmentedControlSelect(group)).observe(group, { subtree: true, attributes: true, attributeFilter: ["aria-pressed"] });
+  hodlSyncSegmentedControlSelect(group);
+  return select;
+}
 function hodlSyncSegmentedControls() {
   hodlSegmentedControlFrame = 0;
   document.querySelectorAll(".segmented-control").forEach((group) => {
+    hodlEnsureSegmentedControlSelect(group);
+    group.classList.remove("is-collapsed");
     if (!group.getClientRects().length) return;
-    let buttons = [...group.children].filter((child) => child.matches(".tab"));
-    group.classList.remove("is-stacked");
+    let buttons = hodlSegmentedControlButtons(group);
     if (buttons.length < 2) return;
     let firstTop = buttons[0].offsetTop, wrapped = buttons.some((button) => Math.abs(button.offsetTop - firstTop) > 1);
-    group.classList.toggle("is-stacked", wrapped);
+    group.classList.toggle("is-collapsed", wrapped);
+    hodlSyncSegmentedControlSelect(group);
   });
 }
 function hodlQueueSegmentedControlSync() {
@@ -8986,6 +10216,7 @@ function hodlQueueSegmentedControlSync() {
 }
 function hodlInitSegmentedControls() {
   let groups = [...document.querySelectorAll(".segmented-control")];
+  groups.forEach(hodlEnsureSegmentedControlSelect);
   if ("ResizeObserver" in window) {
     hodlSegmentedResizeObserver = new ResizeObserver((entries) => {
       let changed = false;
@@ -8998,7 +10229,7 @@ function hodlInitSegmentedControls() {
       });
       if (changed) hodlQueueSegmentedControlSync();
     });
-    groups.forEach((group) => hodlSegmentedResizeObserver.observe(group));
+    [...new Set(groups.map((group) => group.parentElement).filter(Boolean))].forEach((parent) => hodlSegmentedResizeObserver.observe(parent));
   }
   window.addEventListener("resize", hodlQueueSegmentedControlSync, { passive: true });
   hodlQueueSegmentedControlSync();
@@ -9075,6 +10306,7 @@ function hodlInitSecretFieldAutoClear() {
   let clearSecretFields = () => {
     hodlPsbtWipeMem();
     hodlBip85WipeMem();
+    hodlSpWipeMem();
     hodlKeys = hodlKeys.map((state) => {
       let fields = state.fields || {}, privateKeys = fields.privateKeys;
       if (privateKeys) Object.keys(privateKeys).forEach((kind) => {
@@ -9115,6 +10347,15 @@ function hodlInitSecretFieldAutoClear() {
     if (vanityOut) vanityOut.innerHTML = "";
     if (vanityError) vanityError.textContent = "";
     if (vanityStatus) vanityStatus.textContent = "Idle. No range has been ground this session.";
+    let spKey = document.getElementById("sp-key"), spPass = document.getElementById("sp-pass");
+    if (spKey) spKey.value = "";
+    if (spPass) spPass.value = "";
+    let spVins = document.getElementById("sp-send-vins");
+    if (spVins) spVins.value = "";
+    let spOut = document.getElementById("sp-out"), spError = document.getElementById("sp-error"), spSession = document.getElementById("sp-session");
+    if (spOut) spOut.innerHTML = "";
+    if (spError) spError.textContent = "";
+    if (spSession) spSession.textContent = hodlSpNote;
     let out = document.getElementById("out");
     if (out) out.innerHTML = "";
     let error = document.getElementById("error");
