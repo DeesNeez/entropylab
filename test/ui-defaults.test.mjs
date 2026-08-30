@@ -1100,6 +1100,28 @@ test("workspace tabs place BIP-85 between Key Derivation and Multi Signature", (
   assert.match(css, /#bip85-card\[hidden\]/);
 });
 
+test("workspace tabs place Vanity last, after PSBT / Nonce", () => {
+  assert.match(appSource, /\["psbt", "PSBT \/ Nonce"\], \["vanity", "Vanity"\]/);
+  assert.match(template, />PSBT \/ Nonce<\/button><button class="tab" aria-pressed="false">Vanity<\/button>/);
+  for (const markup of [template, appSource]) {
+    for (const id of ["vanity-card", "vanity-prefix", "vanity-length", "vanity-start", "vanity-count", "vanity-workers", "vanity-estimate", "vanity-go", "vanity-progress", "vanity-stop", "vanity-wipe", "vanity-status", "vanity-error", "vanity-out"]) {
+      assert.match(markup, new RegExp(`id="${id}"`), `${id} is present`);
+    }
+    assert.match(markup, /a-zA-Z0-9/, "the passphrase alphabet is documented");
+    assert.match(markup, /does not invent entropy/);
+  }
+  assert.match(css, /#vanity-card\[hidden\]/);
+  assert.match(appSource, /getElementById\("vanity-card"\)\.hidden = id !== "vanity"/);
+  // The grinder only runs inside blob:-URL workers; the CSP allows exactly
+  // that and nothing else.
+  assert.match(template, /worker-src blob:;/);
+});
+
+test("vanity grinding stops when leaving the Vanity tab", () => {
+  assert.match(appSource, /else if \(hodlWorkspace === "vanity"\) hodlVanityStop\(\)/);
+  assert.match(appSource, /document\.getElementById\("vanity-stop"\)\.onclick = hodlVanityStop/);
+});
+
 test("BIP-85 entry point sits beside Derive Wallet and opens the BIP-85 tab", () => {
   for (const markup of [template, appSource]) {
     assert.match(markup, /id="go"[^>]*>Derive Wallet<\/button>[\s\S]*?id="bip85-open"[^>]*>Derive BIP-85 child<\/button>[\s\S]*?id="wipe"/);

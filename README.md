@@ -48,6 +48,16 @@ Official website: [entropylab.online](https://entropylab.online)
   reproduce the same child — this is a calculator, not a generator. Children
   follow the published BIP-85 vectors and match COLDCARD, including derivation
   from a passphrase-extended root when a BIP-39 passphrase is in effect.
+- Grinds vanity legacy (P2PKH) addresses deterministically: a counter becomes
+  a passphrase — base-62 over `a-zA-Z0-9` in odometer order — each passphrase
+  is hashed with SHA-256 into a private key (the brain-wallet convention), and
+  the address is checked against a chosen prefix. One Web Worker per CPU core
+  grinds a disjoint counter range (each range is a bucket of passphrases
+  sharing leading characters), with the hashing and curve math running in a
+  dedicated WebAssembly module. Same counter always reproduces the same
+  address, so results are verifiable; nothing random is invented. Vanity
+  passphrases are brain wallets — anyone grinding the same counter space finds
+  the same keys.
 - Runs a quick barrage of startup sanity checks on the host browser (secure
   context, CSPRNG, BigInt, UTF-8 encoding, and NFKD normalization). If any
   check fails, the page is replaced with a failure report listing the failed
@@ -121,10 +131,14 @@ libsecp256k1 0.8.0 compiled to WebAssembly from the pinned Rust crate in
 toolchain pinned by `rust-toolchain.toml`) via the facade in
 `src/js/secp256k1.js`. BIP32 extended-key derivation and address/script
 construction still run on `@noble/curves`, brought in by the bundled
-`@scure` libraries. The compiled artifact is committed as
-`src/js/secp256k1-wasm-b64.js`, so building the site needs only Node.js. CI
-rebuilds it from the Rust sources, runs its test suite against the fresh
-build, and commits the runner's copy back to `rock` after each merge (the
+`@scure` libraries. The vanity grinder has its own crate in `vanity-wasm/`
+(same pinned libsecp256k1, plus the pinned RustCrypto `sha2`/`ripemd` crates),
+built for speed with the full precomputed EC tables; it is driven from
+`src/js/vanity.js` and the inline worker source in `src/js/vanity-worker.js`.
+The compiled artifacts are committed as `src/js/secp256k1-wasm-b64.js` and
+`src/js/vanity-wasm-b64.js`, so building the site needs only Node.js. CI
+rebuilds them from the Rust sources, runs their test suites against the fresh
+build, and commits the runner's copies back to `rock` after each merge (the
 same flow as the site artifact; byte identity across machines is not
 asserted, since the C side compiles with the builder's clang, and build-host
 paths are remapped out of the binary).
@@ -136,9 +150,10 @@ npm ci
 npm run build
 ```
 
-To modify the curve bindings (`secp256k1-wasm/`), Rust (with the
-`wasm32-unknown-unknown` target, installed automatically by rustup) is also
-required; regenerate the committed artifact with `npm run build:wasm`.
+To modify the curve or grinder bindings (`secp256k1-wasm/`, `vanity-wasm/`),
+Rust (with the `wasm32-unknown-unknown` target, installed automatically by
+rustup) is also required; regenerate the committed artifacts with
+`npm run build:wasm`.
 
 Build output (generated; CI rebuilds it for every run and commits it back to
 `rock` after each merge so the file stays downloadable from the repository):
@@ -157,14 +172,17 @@ To remove generated files, run `npm run clean`.
 ├── scripts/
 │   ├── build.mjs           Locked-dependency esbuild and HTML assembly
 │   ├── build-wasm.mjs      libsecp256k1 WASM rebuild (npm run build:wasm)
+│   ├── build-vanity-wasm.mjs Vanity grinder WASM rebuild (npm run build:wasm)
 │   └── verify-site.mjs     Site artifact verification (npm run verify)
 ├── secp256k1-wasm/         Pinned Rust crate: libsecp256k1 -> WebAssembly bindings
+├── vanity-wasm/            Pinned Rust crate: counter -> passphrase -> P2PKH grinder
 ├── test/
 │   ├── browser-instrumentation.html  In-page browser test hooks
 │   ├── browser-suite.html            In-page browser test suite
 │   ├── browser.test.mjs              Headless-Firefox integration harness
 │   ├── browser-check.test.mjs        Tests for the startup browser sanity checks
 │   ├── network-check.test.mjs        Tests for the network-check module
+│   ├── vanity-wasm.test.mjs          Tests for the vanity grinder (vectors, buckets, worker)
 │   ├── sqlite-writer.test.mjs        Tests for the SQLite writer (verified with real SQLite)
 │   ├── ui-defaults.test.mjs          UI defaults and markup invariants
 │   ├── validate.test.mjs             Source and security invariants
@@ -178,6 +196,9 @@ To remove generated files, run `npm run clean`.
 │       ├── app.js          Application logic and explicit package imports
 │       ├── secp256k1.js    Curve facade over the WASM module (noble-shaped API)
 │       ├── secp256k1-wasm-b64.js Generated WASM artifact (committed; build:wasm)
+│       ├── vanity.js       Vanity grinder: bucketing, validation, worker pool
+│       ├── vanity-worker.js Vanity worker source (spawned from a Blob URL)
+│       ├── vanity-wasm-b64.js Generated vanity WASM artifact (committed; build:wasm)
 │       ├── sqlite-writer.js Minimal SQLite database file writer
 │       ├── wallet-export.js Bitcoin Core wallet.dat descriptor export
 │       ├── online.js       Hosted-site behavior and header version label
@@ -200,7 +221,7 @@ npm run test:ci             # the CI subset: network-check, ui-defaults, source 
 npm run test:validate       # validate source and security invariants
 npm run test:browser        # test crypto, sanitization, networking, exports in headless Firefox
 npm run build               # compile src/ into the generated root files
-npm run build:wasm          # rebuild the committed secp256k1 WASM artifact (needs Rust)
+npm run build:wasm          # rebuild the committed WASM artifacts (needs Rust)
 npm run verify              # verify the site artifact (entropylab.html, assets)
 npm run ci                  # run the CI test subset, build, and verify in order
 ```

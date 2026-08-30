@@ -11,6 +11,7 @@ import { wordlist as bip39English } from "@scure/bip39/wordlists/english.js";
 import { Address as hodlBitcoinAddress, NETWORK as Ie, OutScript as Oe, TEST_NETWORK as mo, p2pkh as ir, p2sh as Jr, p2tr as en, p2wpkh as Tt, utils as bitcoinUtils } from "@scure/btc-signer";
 import { renderSVG as Xs } from "uqr";
 import { BIP39_LANGUAGE_ENGLISH, BIP85_APPS, bip85Path, deriveApplication, parseHardenedIndex, wipeBip85Result, wipeBytes as hodlWipeBytes } from "./bip85.js";
+import { VanityGrinder, estimateVanityWork, validateVanityPrefix, validateVanityRange } from "./vanity.js";
 const Ae = Object.freeze(bip39English);
 const tr = Z;
 const rr = (bytes) => ripemd160(Z(bytes));
@@ -680,6 +681,47 @@ ec.innerHTML = `
       <p class="err" id="psbt-error" role="alert"></p>
       <div id="psbt-out" aria-live="polite"></div>
       <p class="muted">Session keys remain in this page only and are never intentionally stored or sent. Memory clearing is best-effort because browsers may retain internal copies; close the page before reconnecting the computer.</p>
+    </section>
+    <section class="card no-print" id="vanity-card" role="tabpanel" hidden>
+      <div class="kicker">Same counter, same address.</div>
+      <h2>Grind a vanity address</h2>
+      <p class="muted vanity-intro">A counter becomes the passphrase: base-62 over a-zA-Z0-9 in odometer order ("aaa\u2026", "aab\u2026"). Each passphrase is hashed with SHA-256 into a private key (the brain-wallet convention) whose legacy P2PKH address is checked against your prefix. One Web Worker per CPU core grinds a disjoint counter range; a contiguous range is a bucket of passphrases sharing leading characters. This does not invent entropy \u2014 it is a calculator over a counter you choose, and every result reproduces from its counter.</p>
+      <p class="muted vanity-intro">Vanity passphrases are brain wallets: anyone grinding the same counter space finds the same keys. Use the longest practical passphrase length, and paste a found passphrase into Key Derivation \u2192 Private key to see every script type and the WIF.</p>
+      <div class="vanity-grid">
+        <label class="field">Address prefix
+          <input id="vanity-prefix" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="1Love\u2026" aria-describedby="vanity-prefix-help">
+          <span class="field-note" id="vanity-prefix-help">Base58, starts with \u201C1\u201D. Each extra character multiplies the work by ~58.</span>
+        </label>
+        <label class="field">Passphrase length
+          <input id="vanity-length" type="number" min="1" max="32" step="1" inputmode="numeric" value="8" aria-describedby="vanity-length-help">
+          <span class="field-note" id="vanity-length-help">Characters a-zA-Z0-9. 62^10 counters fill the 64-bit counter; longer passphrases grind their low range.</span>
+        </label>
+      </div>
+      <div class="vanity-grid">
+        <label class="field">Start counter
+          <input id="vanity-start" inputmode="numeric" autocomplete="off" spellcheck="false" value="0" aria-describedby="vanity-start-help">
+          <span class="field-note" id="vanity-start-help">First counter tried. Counter 0 is passphrase "aaa\u2026".</span>
+        </label>
+        <label class="field">Range size
+          <input id="vanity-count" inputmode="numeric" autocomplete="off" spellcheck="false" value="1000000" aria-describedby="vanity-count-help">
+          <span class="field-note" id="vanity-count-help">Candidates to grind. After a run, Start continues where the range ended.</span>
+        </label>
+        <label class="field">Workers
+          <input id="vanity-workers" type="number" min="1" max="64" step="1" inputmode="numeric" value="1" aria-describedby="vanity-workers-help">
+          <span class="field-note" id="vanity-workers-help">One per CPU core is fastest; defaults to this device's core count.</span>
+        </label>
+      </div>
+      <p class="muted" id="vanity-estimate" aria-live="polite"></p>
+      <div class="row current-item-actions">
+        <button class="btn primary" id="vanity-go" type="button">Start grinding</button>
+        <div class="derive-progress" id="vanity-progress" role="progressbar" aria-label="Vanity grinding progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0% complete" hidden><span class="derive-progress-track"><span class="derive-progress-bar"></span></span><span class="derive-progress-label">0%</span></div>
+        <button class="btn secondary" id="vanity-stop" type="button" disabled>Stop</button>
+        <button class="btn clear-current-action" id="vanity-wipe" type="button" disabled aria-disabled="true">Clear results</button>
+      </div>
+      <p class="muted" id="vanity-status" aria-live="polite">Idle. No range has been ground this session.</p>
+      <p class="err" id="vanity-error" role="alert"></p>
+      <div id="vanity-out" aria-live="polite"></div>
+      <p class="muted">Found passphrases remain in this page only. Memory clearing is best-effort; close the page before reconnecting the computer.</p>
     </section>
     <div id="out"></div>
     <section class="card muted sources">
@@ -8547,6 +8589,7 @@ function hodlShowWorkspace(id) {
   let preservedTop = window.scrollY, preservedLeft = window.scrollX;
   if (hodlWorkspace === "calc") hodlCaptureKey();
   else if (hodlWorkspace === "msig") hodlCaptureMsig();
+  else if (hodlWorkspace === "vanity") hodlVanityStop();
   hodlWorkspace = id;
   [...W("#workspace").children].forEach((button) => {
     let active = button.dataset.workspace === id;
@@ -8559,6 +8602,7 @@ function hodlShowWorkspace(id) {
   document.getElementById("msig-card").hidden = true;
   document.getElementById("psbt-card").hidden = id !== "psbt";
   document.getElementById("bip85-card").hidden = id !== "bip85";
+  document.getElementById("vanity-card").hidden = id !== "vanity";
   re = null;
   Ge = false;
   dr.innerHTML = "";
@@ -8650,10 +8694,144 @@ function hodlSeedInitialManagers() {
     hodlActiveMsig = 0;
   }
 }
+var hodlVanityGrinder = null, hodlVanityMatches = [], hodlVanityFound = 0, hodlVanityRunning = false, hodlVanityDisplayLimit = 100;
+function hodlVanityFormatCount(value) {
+  return BigInt(value).toLocaleString("en-US");
+}
+function hodlVanityEstimate() {
+  let estimateEl = document.getElementById("vanity-estimate");
+  if (!estimateEl) return;
+  try {
+    let prefix = validateVanityPrefix(document.getElementById("vanity-prefix").value);
+    estimateEl.textContent = `Prefix \u201C${prefix}\u201D matches about 1 in ${hodlVanityFormatCount(estimateVanityWork(prefix))} candidates on average.`;
+  } catch {
+    estimateEl.textContent = "";
+  }
+}
+function hodlVanityParseInputs() {
+  let prefix = validateVanityPrefix(document.getElementById("vanity-prefix").value);
+  let passLen = Number(document.getElementById("vanity-length").value);
+  let parseCounter = (id, label) => {
+    let raw = document.getElementById(id).value.trim();
+    if (!/^\d+$/.test(raw)) throw new Error(`${label} is a whole number (digits only).`);
+    return BigInt(raw);
+  };
+  let start = parseCounter("vanity-start", "The start counter");
+  let count = parseCounter("vanity-count", "The range size");
+  let workers = Math.max(1, Math.min(64, Number(document.getElementById("vanity-workers").value) || 1));
+  return { prefix, ...validateVanityRange(passLen, start, count), workers };
+}
+function hodlRenderVanityOut() {
+  let box = document.getElementById("vanity-out");
+  if (!box) return;
+  if (!hodlVanityMatches.length) {
+    box.innerHTML = "";
+    return;
+  }
+  let rows = hodlVanityMatches.map((match, index) => `<tr aria-rowindex="${index + 2}"><th scope="row">${index + 1}</th><td class="mono">${$t(match.counter.toString())}</td><td class="mono">${$t(match.passphrase)}</td><td class="mono">${$t(match.address)}</td></tr>`).join("");
+  let overflow = hodlVanityFound > hodlVanityMatches.length ? `<p class="muted">Only the first ${hodlVanityMatches.length} matches are listed; ${hodlVanityFormatCount(hodlVanityFound)} found in total.</p>` : "";
+  box.innerHTML = `<section class="wallet-data-section" aria-labelledby="vanity-matches-heading">
+      <div class="wallet-data-section-head"><h3 id="vanity-matches-heading">Matching addresses</h3>
+      <p class="muted">Each passphrase reproduces its address (SHA-256 \u2192 legacy P2PKH). Anyone who finds the same passphrase takes the coins.</p></div>
+      <div class="wallet-address-table"><div class="wallet-table wallet-table-public" role="region" tabindex="0" aria-label="Matching vanity addresses table"><table aria-rowcount="${hodlVanityMatches.length + 1}"><caption class="sr-only">Matching vanity addresses</caption><thead><tr aria-rowindex="1"><th scope="col">#</th><th scope="col">Counter</th><th scope="col">Passphrase</th><th scope="col">Address</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+      ${overflow}</section>`;
+}
+function hodlVanitySyncControls() {
+  let go = document.getElementById("vanity-go"), stop = document.getElementById("vanity-stop"), wipe = document.getElementById("vanity-wipe"), progress = document.getElementById("vanity-progress");
+  if (go) {
+    go.disabled = hodlVanityRunning;
+    go.setAttribute("aria-disabled", String(hodlVanityRunning));
+    go.textContent = hodlVanityRunning ? "Grinding\u2026" : "Start grinding";
+  }
+  if (stop) stop.disabled = !hodlVanityRunning;
+  let dirty = hodlVanityFound > 0 && !hodlVanityRunning;
+  if (wipe) {
+    wipe.disabled = !dirty;
+    wipe.setAttribute("aria-disabled", String(!dirty));
+  }
+  if (progress) progress.hidden = !hodlVanityRunning;
+}
+function hodlVanitySetStatus(text) {
+  let status = document.getElementById("vanity-status");
+  if (status) status.textContent = text;
+}
+function hodlVanityStop() {
+  if (hodlVanityGrinder && hodlVanityRunning) hodlVanityGrinder.stop();
+}
+function hodlRunVanity() {
+  let error = document.getElementById("vanity-error");
+  if (error) error.textContent = "";
+  let inputs;
+  try {
+    inputs = hodlVanityParseInputs();
+  } catch (exception) {
+    if (error) error.textContent = exception.message || String(exception);
+    return;
+  }
+  hodlVanityMatches = [];
+  hodlVanityFound = 0;
+  hodlRenderVanityOut();
+  hodlVanityRunning = true;
+  hodlVanitySyncControls();
+  hodlVanitySetStatus("Starting workers\u2026");
+  let progressBar = document.getElementById("vanity-progress");
+  hodlVanityGrinder = new VanityGrinder({
+    onProgress: ({ done, total, rate }) => {
+      let percent = total > 0n ? Number((done * 10000n) / total) / 100 : 0;
+      if (progressBar) {
+        progressBar.setAttribute("aria-valuenow", String(Math.floor(percent)));
+        progressBar.setAttribute("aria-valuetext", `${percent.toFixed(1)}% complete`);
+        let fill = progressBar.querySelector(".derive-progress-bar"), label = progressBar.querySelector(".derive-progress-label");
+        if (fill) fill.style.width = `${percent}%`;
+        if (label) label.textContent = `${percent.toFixed(1)}%`;
+      }
+      hodlVanitySetStatus(`${hodlVanityFormatCount(done)} / ${hodlVanityFormatCount(total)} candidates \u00B7 ${hodlVanityFormatCount(Math.round(rate))}/s \u00B7 ${hodlVanityFound} match${hodlVanityFound === 1 ? "" : "es"}`);
+    },
+    onMatch: (match) => {
+      hodlVanityFound += 1;
+      if (hodlVanityMatches.length < hodlVanityDisplayLimit) {
+        hodlVanityMatches.push(match);
+        hodlRenderVanityOut();
+      }
+    },
+    onDone: ({ done, stopped }) => {
+      hodlVanityRunning = false;
+      // The next run resumes where this range ended; the counter field is the
+      // durable record of what has been ground.
+      let nextStart = inputs.start + done;
+      let startField = document.getElementById("vanity-start");
+      if (startField) startField.value = nextStart.toString();
+      hodlVanitySetStatus(`${stopped ? "Stopped" : "Range complete"}: ${hodlVanityFormatCount(done)} candidates, ${hodlVanityFound} match${hodlVanityFound === 1 ? "" : "es"}. Next counter: ${nextStart.toString()}.`);
+      hodlVanitySyncControls();
+    },
+    onError: (message) => {
+      if (error) error.textContent = message;
+    },
+  });
+  hodlVanityGrinder.start(inputs);
+}
+function hodlInitVanity() {
+  let go = document.getElementById("vanity-go");
+  if (!go) return;
+  let workersField = document.getElementById("vanity-workers");
+  if (workersField && navigator.hardwareConcurrency) workersField.value = String(Math.max(1, Math.min(64, navigator.hardwareConcurrency)));
+  go.onclick = hodlRunVanity;
+  document.getElementById("vanity-stop").onclick = hodlVanityStop;
+  document.getElementById("vanity-wipe").onclick = () => {
+    hodlVanityMatches = [];
+    hodlVanityFound = 0;
+    hodlRenderVanityOut();
+    hodlVanitySetStatus("Results cleared (best effort).");
+    hodlVanitySyncControls();
+  };
+  document.getElementById("vanity-prefix").addEventListener("input", hodlVanityEstimate);
+  hodlVanityEstimate();
+  hodlVanitySyncControls();
+}
 function hodlInitWorkspace() {
   let box = W("#workspace");
   box.innerHTML = "";
-  [["calc", "Key Derivation"], ["bip85", "BIP-85"], ["msig", "Multi Signature"], ["psbt", "PSBT / Nonce"]].forEach(([id, label]) => {
+  [["calc", "Key Derivation"], ["bip85", "BIP-85"], ["msig", "Multi Signature"], ["psbt", "PSBT / Nonce"], ["vanity", "Vanity"]].forEach(([id, label]) => {
     let button = document.createElement("button"), active = hodlWorkspace === id;
     button.type = "button";
     button.className = "tab" + (active ? " active" : "");
@@ -8666,6 +8844,7 @@ function hodlInitWorkspace() {
   hodlInitMsig();
   hodlInitPsbt();
   hodlInitBip85();
+  hodlInitVanity();
 }
 var hodlKeyClearSyncQueued = false, hodlMsigClearSyncQueued = false, hodlDeriveSyncQueued = false;
 function hodlQueueKeyClearButtonSync() {
@@ -8842,6 +9021,14 @@ function hodlInitSecretFieldAutoClear() {
     if (bip85Out) bip85Out.innerHTML = "";
     if (bip85Error) bip85Error.textContent = "";
     if (bip85Session) bip85Session.textContent = hodlBip85Note;
+    // Found vanity passphrases are private key material; drop them too.
+    hodlVanityStop();
+    hodlVanityMatches = [];
+    hodlVanityFound = 0;
+    let vanityOut = document.getElementById("vanity-out"), vanityError = document.getElementById("vanity-error"), vanityStatus = document.getElementById("vanity-status");
+    if (vanityOut) vanityOut.innerHTML = "";
+    if (vanityError) vanityError.textContent = "";
+    if (vanityStatus) vanityStatus.textContent = "Idle. No range has been ground this session.";
     let out = document.getElementById("out");
     if (out) out.innerHTML = "";
     let error = document.getElementById("error");

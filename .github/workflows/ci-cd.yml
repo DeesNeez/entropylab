@@ -96,15 +96,16 @@ jobs:
           path: _site
           retention-days: 7
 
-  # The secp256k1 WASM artifact (src/js/secp256k1-wasm-b64.js) is built from
-  # the pinned Rust crate (secp256k1-wasm/, Cargo.lock, rust-toolchain.toml).
-  # This job rebuilds it from scratch and runs its test suite against the
-  # fresh build, so a stale or hand-edited committed artifact cannot hide a
-  # broken crate. The artifact itself is committed back by the `artifact` job
-  # after merges, same as entropylab.html: byte identity across machines is
-  # not asserted because the C side compiles with the runner's clang.
+  # The WASM artifacts (src/js/secp256k1-wasm-b64.js, src/js/vanity-wasm-b64.js)
+  # are built from the pinned Rust crates (secp256k1-wasm/, vanity-wasm/; each
+  # with its own Cargo.lock and rust-toolchain.toml). This job rebuilds them
+  # from scratch and runs their test suites against the fresh builds, so a
+  # stale or hand-edited committed artifact cannot hide a broken crate. The
+  # artifacts themselves are committed back by the `artifact` job after merges,
+  # same as entropylab.html: byte identity across machines is not asserted
+  # because the C side compiles with the runner's clang.
   build-wasm:
-    name: Build · secp256k1 WASM from Rust sources
+    name: Build · WASM from Rust sources
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -115,10 +116,10 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
-      - name: Rebuild the WASM artifact from the Rust sources
+      - name: Rebuild the WASM artifacts from the Rust sources
         run: npm run build:wasm
       - name: Test the freshly built bindings
-        run: node --test test/secp256k1-wasm.test.mjs
+        run: node --test test/secp256k1-wasm.test.mjs test/vanity-wasm.test.mjs
 
   # Resolve the OS matrix from workflow_dispatch checkboxes (defaults to Ubuntu
   # for automatic triggers or when nothing is selected).
@@ -322,9 +323,9 @@ jobs:
   # ── Artifact: commit the tested site after merges to rock ────────────────
   # Gated on every behavioral job (unit, browser, structural, WASM), then
   # commits the exact tested candidate — it never rebuilds the wallet HTML.
-  # The secp256k1 WASM artifact is still rebuilt here from the pinned Rust
-  # sources (cross-machine byte identity is not claimed for it; the build-wasm
-  # job gates its behavior).
+  # The WASM artifacts are still rebuilt here from the pinned Rust sources
+  # (cross-machine byte identity is not claimed for them; the build-wasm job
+  # gates their behavior).
 
   artifact:
     name: Artifact · commit tested site after merge
@@ -342,7 +343,7 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
-      - name: Rebuild the secp256k1 WASM artifact from the Rust sources
+      - name: Rebuild the WASM artifacts from the Rust sources
         run: npm run build:wasm
       - name: Download the tested candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -356,7 +357,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f entropylab.html src/js/secp256k1-wasm-b64.js SHA256SUMS.txt
+          git add -f entropylab.html src/js/secp256k1-wasm-b64.js src/js/vanity-wasm-b64.js SHA256SUMS.txt
           if git diff --cached --quiet; then
             echo "Build output is unchanged; nothing to commit."
             exit 0

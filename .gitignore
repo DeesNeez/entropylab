@@ -8,5 +8,6 @@ node_modules/
 /SHA256SUMS.txt
 /versions.json
 
-# Rust build output (the wasm artifact is committed as src/js/secp256k1-wasm-b64.js)
+# Rust build output (the wasm artifacts are committed as src/js/*-wasm-b64.js)
 secp256k1-wasm/target/
+vanity-wasm/target/
