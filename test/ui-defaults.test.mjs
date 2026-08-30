@@ -81,6 +81,10 @@ test("key and multisig derivation use an indexed address window with an estimate
     assert.match(markup, /id="address-range"[^>]*value="5"/);
     assert.match(markup, /id="msig-address-start"[^>]*value="0"/);
     assert.match(markup, /id="msig-address-range"[^>]*value="5"/);
+    assert.match(markup, /id="address-start-help">First receive and change index to derive (?:·|\\xB7) 0 to 2,147,483,647/);
+    assert.match(markup, /id="address-range-help">Derives 5 receive and 5 change addresses (?:·|\\xB7) Max 10,000/);
+    assert.match(markup, /id="msig-address-start-help">First receive and change index to derive (?:·|\\xB7) 0 to 2,147,483,647/);
+    assert.match(markup, /id="msig-address-range-help">Derives 5 receive and 5 change addresses (?:·|\\xB7) Max 10,000/);
     assert.match(markup, /id="derive-progress"[^>]*role="progressbar"/);
     assert.match(markup, /id="msig-derive-progress"[^>]*role="progressbar"/);
     assert.doesNotMatch(markup, /id="(?:msig-)?count"/);
@@ -88,6 +92,10 @@ test("key and multisig derivation use an indexed address window with an estimate
     assert.match(markup, /id="msig-address-range"[\s\S]*id="msig-address-estimate"[\s\S]*id="msig-go"/);
   }
   assert.match(appSource, /function hodlReadAddressWindow\(prefix = "", mark = true\)/);
+  assert.match(appSource, /function hodlSyncAddressRangeLimit\(prefix = ""\)/);
+  assert.match(appSource, /Math\.min\(hodlMaxAddressRange, hodlMaxAddressIndex - start \+ 1\)/);
+  assert.match(appSource, /if \(\/\^\\d\+\$\/\.test\(rangeRaw\)[^\n]*range > maximum\) rangeInput\.value = String\(maximum\)/);
+  assert.match(appSource, /Max \$\{maximum\.toLocaleString\(\)\}/);
   assert.match(appSource, /for \(let index = startIndex; index < startIndex \+ o; index\+\+\)/);
   assert.match(appSource, /function hodlInitAddressBenchmark\(\)/);
   assert.match(appSource, /requestIdleCallback\(run, \{ timeout: 750 \}\)/);

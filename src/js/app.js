@@ -481,11 +481,11 @@ ec.innerHTML = `
         <div class="key-settings-row address-range-settings" id="address-range-settings">
           <label class="field">Starting address index
             <input id="address-start" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0" aria-describedby="address-start-help">
-            <span class="field-note" id="address-start-help">First receive and change index to derive.</span>
+            <span class="field-note" id="address-start-help">First receive and change index to derive · 0 to 2,147,483,647</span>
           </label>
           <label class="field">Address range
             <input id="address-range" type="number" min="1" max="10000" step="1" inputmode="numeric" value="5" aria-describedby="address-range-help">
-            <span class="field-note" id="address-range-help">Derives 5 receive and 5 change addresses.</span>
+            <span class="field-note" id="address-range-help">Derives 5 receive and 5 change addresses · Max 10,000</span>
           </label>
         </div>
       </div>
@@ -565,11 +565,11 @@ ec.innerHTML = `
         <div class="key-settings-row address-range-settings">
           <label class="field">Starting address index
             <input id="msig-address-start" type="number" min="0" max="2147483647" step="1" inputmode="numeric" value="0" aria-describedby="msig-address-start-help">
-            <span class="field-note" id="msig-address-start-help">First receive and change index to derive.</span>
+            <span class="field-note" id="msig-address-start-help">First receive and change index to derive · 0 to 2,147,483,647</span>
           </label>
           <label class="field">Address range
             <input id="msig-address-range" type="number" min="1" max="10000" step="1" inputmode="numeric" value="5" aria-describedby="msig-address-range-help">
-            <span class="field-note" id="msig-address-range-help">Derives 5 receive and 5 change addresses.</span>
+            <span class="field-note" id="msig-address-range-help">Derives 5 receive and 5 change addresses · Max 10,000</span>
           </label>
         </div>
         <details class="msig-advanced" id="msig-advanced">
@@ -1834,10 +1834,21 @@ function hodlReadAccount() {
   return value;
 }
 var hodlMaxAddressIndex = 2147483647, hodlMaxAddressRange = 10000, hodlAddressBenchmarkMs = null;
+function hodlSyncAddressRangeLimit(prefix = "") {
+  let startInput = document.getElementById(`${prefix}address-start`), rangeInput = document.getElementById(`${prefix}address-range`);
+  if (!rangeInput) return hodlMaxAddressRange;
+  let startRaw = String(startInput?.value ?? "").trim(), start = Number(startRaw), startValid = /^\d+$/.test(startRaw) && Number.isSafeInteger(start) && start >= 0 && start <= hodlMaxAddressIndex;
+  let maximum = startValid ? Math.min(hodlMaxAddressRange, hodlMaxAddressIndex - start + 1) : hodlMaxAddressRange;
+  rangeInput.max = String(maximum);
+  let rangeRaw = String(rangeInput.value ?? "").trim(), range = Number(rangeRaw);
+  if (/^\d+$/.test(rangeRaw) && Number.isSafeInteger(range) && range > maximum) rangeInput.value = String(maximum);
+  return maximum;
+}
 function hodlReadAddressWindow(prefix = "", mark = true) {
   let startInput = document.getElementById(`${prefix}address-start`), rangeInput = document.getElementById(`${prefix}address-range`), startRaw = String(startInput?.value ?? "").trim(), rangeRaw = String(rangeInput?.value ?? "").trim();
   let start = Number(startRaw), range = Number(rangeRaw), startValid = /^\d+$/.test(startRaw) && Number.isSafeInteger(start) && start >= 0 && start <= hodlMaxAddressIndex;
-  let rangeValid = /^\d+$/.test(rangeRaw) && Number.isSafeInteger(range) && range >= 1 && range <= hodlMaxAddressRange;
+  let maximum = startValid ? Math.min(hodlMaxAddressRange, hodlMaxAddressIndex - start + 1) : hodlMaxAddressRange;
+  let rangeValid = /^\d+$/.test(rangeRaw) && Number.isSafeInteger(range) && range >= 1 && range <= maximum;
   let endValid = startValid && rangeValid && start + range - 1 <= hodlMaxAddressIndex;
   if (mark) {
     startInput?.classList.toggle("bad", !startValid || !endValid);
@@ -1846,7 +1857,7 @@ function hodlReadAddressWindow(prefix = "", mark = true) {
     rangeInput?.setAttribute("aria-invalid", String(!rangeValid || !endValid));
   }
   if (!startValid) throw new Error("Starting address index must be a whole number from 0 to 2,147,483,647.");
-  if (!rangeValid) throw new Error("Address range must be a whole number from 1 to 10,000.");
+  if (!rangeValid) throw new Error(`Address range must be a whole number from 1 to ${maximum.toLocaleString()}.`);
   if (!endValid) throw new Error("The address range extends beyond the maximum non-hardened address index of 2,147,483,647.");
   return { start, range, end: start + range - 1 };
 }
@@ -1859,9 +1870,10 @@ function hodlFormatAddressEstimate(milliseconds) {
 function hodlUpdateAddressEstimate(prefix = "") {
   let estimate = document.getElementById(`${prefix}address-estimate`), help = document.getElementById(`${prefix}address-range-help`);
   if (!estimate || !help) return;
+  let maximum = hodlSyncAddressRangeLimit(prefix);
   try {
     let { range } = hodlReadAddressWindow(prefix, false), keyCount = prefix ? Math.max(1, Number(document.getElementById("msig-n")?.value) || 1) : (hodlImportedExtendedKeyDepth() ?? 0) > 0 ? 1 : 4;
-    help.textContent = `Derives ${range.toLocaleString()} receive and ${range.toLocaleString()} change addresses.`;
+    help.textContent = `Derives ${range.toLocaleString()} receive and ${range.toLocaleString()} change addresses · Max ${maximum.toLocaleString()}`;
     estimate.textContent = hodlAddressBenchmarkMs == null ? "Measuring this device\u2026" : `Estimated derivation time on this device: ${hodlFormatAddressEstimate(hodlAddressBenchmarkMs * range * 2 * keyCount)}.`;
   } catch (error) {
     help.textContent = "Choose a valid receive and change address range.";
@@ -2145,6 +2157,7 @@ function hodlInitDerivationControls() {
     let target = event.target;
     if (!(target instanceof Element)) return;
     if (["purpose", "network", "account", "address-start", "address-range"].includes(target.id)) {
+      if (target.id === "address-start") hodlSyncAddressRangeLimit();
       let state = hodlKeys[hodlActiveKey];
       if (state) state.fields[target.id === "network" ? "coinType" : target.id === "address-start" ? "addressStart" : target.id === "address-range" ? "addressRange" : target.id] = target.value;
       if (target.id === "network") {
