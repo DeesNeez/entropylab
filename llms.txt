@@ -13,7 +13,7 @@ EntropyLab is a single HTML file with no runtime dependencies. It is designed to
 - Edits PSBT v0 files field by field (bip174.org-style): every global/input/output key-value pair decoded and editable, structured transaction fields, and rust-bitcoin-validated re-serialization. A mempool.space-style flow diagram (clickable input/output/transaction boxes joined by bezier connectors, inline output amounts) doubles as the editing surface. Never signs.
 - Derives BIP-85 child entropy from a BIP32 root: English BIP-39, WIF, XPRV, HEX, and Base64/Base85 passwords.
 - Derives BIP-352 Silent Payment addresses, labeled codes, and BIP-392 descriptors; computes sender taproot outputs and verifies pasted outputs offline. Does not scan the chain.
-- Optional global entropy sync keeps direct dice, cards, number bases, BIP39 words/numbers, and private-key encodings aligned live. It stays visible but is unavailable for hashed input methods. Off by default.
+- Optional global entropy sync keeps direct dice, cards, number bases, BIP39 words/numbers, and private-key encodings aligned live. Hashed inputs update those methods in one direction and are never overwritten by non-hashed edits. Off by default.
 - SLIP-132 display is prefix-swap only. Shows as-pasted, Bitcoin Core xpub/xprv (or tpub/tprv), and descriptor. SLIP form only when path/script match. No Taproot prefix. Testnet t/u/v/U/V.
 - Exports a Bitcoin Core wallet.dat (watch-only by default) with all derived descriptors imported.
 - Runs startup sanity checks on the host browser and refuses to render if they fail.

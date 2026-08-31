@@ -512,12 +512,13 @@
     input(preservedBase32, "");
   });
 
-  await test("global entropy sync follows partial direct input and excludes hashed input", async () => {
+  await test("global entropy sync follows partial direct input and supports one-way hashed input", async () => {
     document.querySelector('[data-seed-words="12"]').click();
     await chooseMode("Number bases");
     document.querySelector('input[name="entropy-format"][value="bin"]').click();
     const binary = await until(() => document.getElementById("bin"), "global-sync binary input");
     const directToggle = document.getElementById("global-entropy-sync");
+    const syncLabel = directToggle.closest("label").textContent;
     if (!directToggle.checked) directToggle.click();
     input(binary, "000");
     assert(document.getElementById("global-sync-status").textContent.includes("3 bits synced"), "Partial direct entropy did not sync immediately");
@@ -563,18 +564,27 @@
 
     await chooseMode("Dice rolls");
     document.querySelector('input[name="dm"][value="coldcard"]').click();
-    const hashedToggle = document.getElementById("global-entropy-sync");
+    let hashedToggle = document.getElementById("global-entropy-sync");
     assert(hashedToggle.closest("#global-sync-host"), "The global sync control moved away from the method button bar for a hashed input");
-    assert(hashedToggle.disabled && hashedToggle.checked, "A hashed input method did not preserve the enabled non-hashed sync preference while showing it as unavailable");
-    assert(hashedToggle.closest("label").textContent.includes("non-hashed"), "The global sync label did not explain its non-hashed scope");
+    assert(!hashedToggle.disabled && hashedToggle.checked, "The global sync checkbox was unavailable for a hashed input method");
+    equal(hashedToggle.closest("label").textContent, syncLabel, "The global sync label changed for a hashed input method");
+    hashedToggle.click();
+    hashedToggle = document.getElementById("global-entropy-sync");
+    assert(!hashedToggle.checked, "The global sync checkbox could not be turned off for a hashed input method");
+    hashedToggle.click();
+    hashedToggle = document.getElementById("global-entropy-sync");
+    assert(hashedToggle.checked, "The global sync checkbox could not be turned on for a hashed input method");
     const hashedDice = document.getElementById("dice");
     input(hashedDice, "1");
-    assert(document.getElementById("global-entropy-sync").disabled, "Entering hashed input enabled global sync");
     await chooseMode("Number bases");
     document.querySelector('input[name="entropy-format"][value="hex"]').click();
-    equal(document.getElementById("hex").value, wifHex, "A hashed input changed the last non-hashed synchronized entropy");
+    const hashedHex = document.getElementById("hex");
+    assert(hashedHex.value.length === 32 && hashedHex.value !== wifHex, "A hashed input did not publish its entropy to a non-hashed method");
+    input(hashedHex, "0".repeat(32));
+    await chooseMode("Dice rolls");
+    equal(document.getElementById("dice").value, "1", "A non-hashed edit overwrote the hashed dice transcript");
+    equal(document.getElementById("global-entropy-sync").closest("label").textContent, syncLabel, "The global sync label changed after a one-way hashed sync");
     const cleanupToggle = document.getElementById("global-entropy-sync");
-    assert(!cleanupToggle.disabled && cleanupToggle.checked, "The non-hashed sync preference did not resume after leaving a hashed method");
     if (cleanupToggle.checked) cleanupToggle.click();
     document.getElementById("wipe").click();
   });

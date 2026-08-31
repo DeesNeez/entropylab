@@ -108,11 +108,11 @@ Official website: [entropylab.online](https://entropylab.online)
   wallet looks empty, repair it with `rescanblockchain 0` in Bitcoin Core.
   Generated database files match Bitcoin Core's own record layout
   byte-for-byte (verified against Bitcoin Core v28.3.0).
-- An optional **Sync non-hashed input methods** checkbox (off by default) keeps
+- An optional **Sync entropy across methods** checkbox (off by default) keeps
   direct dice, card, number-base, seed-word, and private-key representations in
   sync while input is entered. Each destination waits for enough bits to emit
-  its next complete character. The control remains visible but unavailable for
-  hashed input methods.
+  its next complete character. Hashed inputs update the non-hashed methods in
+  one direction; edits to non-hashed methods never overwrite hashed inputs.
 - SLIP-132 extended-key display is a prefix swap only (same payload, new
   version bytes and checksum). Import/derive shows the key as pasted, the
   Bitcoin Core xprv/xpub or tprv/tpub, and the descriptor (script in the
