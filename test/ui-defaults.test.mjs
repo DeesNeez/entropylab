@@ -65,7 +65,7 @@ test("wallet coin type indexes enable and default to mainnet", () => {
   assert.match(appSource, /Number\(coinType\) === 1 \? "testnet" : "mainnet"/);
   // New keys, the lab reset, and new multisigs default to the header picker's
   // network, which always boots mainnet.
-  assert.match(app, /var hodlNetworkDefault="mainnet"/);
+  assert.match(app, /var hodlNetworkChoice="mainnet",hodlNetworkDefault="mainnet"/);
   assert.match(app, /coinType:`\$\{hodlDefaultCoinType\(\)\}'`,coinTypeHarden:!0,network:hodlNetworkDefault/);
   assert.match(app, /coinType:String\(hodlDefaultCoinType\(\)\),coinTypeHarden:!0,network:hodlNetworkDefault/);
 });
@@ -87,22 +87,40 @@ test("the header network picker sets the network every tool defaults to", () => 
     );
     assert.match(markup, /id="network-picker" data-network="mainnet"/);
     assert.match(markup, /id="network-picker-button"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"[^>]*aria-controls="network-picker-menu"/);
-    assert.match(markup, /aria-label="Bitcoin network: Mainnet\. Change the network the tools derive and check for"/);
+    assert.match(markup, /aria-label="Bitcoin network: Bitcoin\. Change the network the tools derive and check for"/);
     // The Bitcoin Core icon's coin — orange disc, white B — beside the name.
     assert.match(markup, /<circle class="network-picker-coin" cx="12" cy="12" r="12"\/>/);
     assert.match(markup, /<path class="network-picker-b" fill-rule="evenodd"/);
-    assert.match(markup, /id="network-picker-label">Mainnet</);
+    assert.match(markup, /id="network-picker-label">Bitcoin</);
     assert.match(markup, /id="network-picker-menu" role="menu" aria-label="Bitcoin network" hidden/);
+    // Bitcoin Core's four networks, each carrying its coin beside the name.
     assert.match(markup, /role="menuitemradio" aria-checked="true" data-network="mainnet"/);
     assert.match(markup, /role="menuitemradio" aria-checked="false" data-network="testnet"/);
+    assert.match(markup, /role="menuitemradio" aria-checked="false" data-network="signet"/);
+    assert.match(markup, /role="menuitemradio" aria-checked="false" data-network="regtest"/);
+    assert.equal(markup.match(/class="network-picker-option-coin"/g).length, 4);
     // Each option names the checks and defaults it switches.
+    assert.match(markup, /<strong>Bitcoin<\/strong>/);
+    assert.match(markup, /<strong>Testnet<\/strong>/);
+    assert.match(markup, /<strong>Signet<\/strong>/);
+    assert.match(markup, /<strong>Regtest<\/strong>/);
     assert.match(markup, /xpub\/ypub\/zpub · WIF 5\/K\/L · coin type 0'/);
-    assert.match(markup, /tpub\/upub\/vpub · WIF 9\/c · coin type 1' · signet shares these/);
+    assert.match(markup, /tpub\/upub\/vpub · WIF 9\/c · coin type 1'/);
+    // Signet and regtest derive with the testnet formats; the options say so.
+    assert.match(markup, /Signed practice coins, no value · same formats as testnet/);
+    assert.match(markup, /Local sandbox coins · derived here with the testnet formats/);
     // And the menu says plainly that no connection is ever made.
     assert.match(markup, /This page never connects to any network/);
   }
   assert.match(appSource, /var hodlNetworkDefault = "mainnet"/);
   assert.match(appSource, /return hodlNetworkDefault === "testnet" \? 1 : 0/);
+  // The picker tracks Bitcoin Core's four networks, but the tools stay
+  // binary: signet and regtest share the testnet versions.
+  assert.match(appSource, /var hodlNetworkChoice = "mainnet"/);
+  assert.match(appSource, /hodlNetworkChoice = \["testnet", "signet", "regtest"\]\.includes\(network\) \? network : "mainnet"/);
+  assert.match(appSource, /hodlNetworkDefault = hodlNetworkChoice === "mainnet" \? "mainnet" : "testnet"/);
+  assert.match(appSource, /let names = \{ mainnet: "Bitcoin", testnet: "Testnet", signet: "Signet", regtest: "Regtest" \}/);
+  assert.match(appSource, /option\.dataset\.network === hodlNetworkChoice/);
   assert.match(appSource, /function hodlApplyNetworkDefault\(network\)/);
   assert.match(appSource, /function hodlInitNetworkPicker\(\)/);
   // The pick reaches every tool's own network control through the control's
@@ -116,10 +134,19 @@ test("the header network picker sets the network every tool defaults to", () => 
   assert.match(appSource, /select\.dispatchEvent\(new Event\("change", \{ bubbles: true \}\)\)/);
   // The choice is never stored: every load opens on mainnet again.
   assert.doesNotMatch(appSource, /localStorage\.setItem\([^)]*network/i);
-  // The coin takes the Bitcoin Core icon orange; testnet drops it to grey.
+  // The coin takes the Bitcoin Core network colours — yellow mainnet, green
+  // testnet, purple signet, grey regtest — on the button and on each option.
   assert.match(css, /--bitcoin: #f7931a;/);
+  assert.match(css, /--testnet: #22c55e;/);
+  assert.match(css, /--signet: #a855f7;/);
   assert.match(css, /\.network-picker-coin \{ fill: var\(--bitcoin\); \}/);
-  assert.match(css, /\.network-picker\[data-network="testnet"\] \.network-picker-coin \{ fill: var\(--faint\); \}/);
+  assert.match(css, /\.network-picker\[data-network="testnet"\] \.network-picker-coin \{ fill: var\(--testnet\); \}/);
+  assert.match(css, /\.network-picker\[data-network="signet"\] \.network-picker-coin \{ fill: var\(--signet\); \}/);
+  assert.match(css, /\.network-picker\[data-network="regtest"\] \.network-picker-coin \{ fill: var\(--faint\); \}/);
+  assert.match(css, /\.network-picker-option-coin \{ fill: var\(--bitcoin\); \}/);
+  assert.match(css, /\.network-picker-option\[data-network="testnet"\] \.network-picker-option-coin \{ fill: var\(--testnet\); \}/);
+  assert.match(css, /\.network-picker-option\[data-network="signet"\] \.network-picker-option-coin \{ fill: var\(--signet\); \}/);
+  assert.match(css, /\.network-picker-option\[data-network="regtest"\] \.network-picker-option-coin \{ fill: var\(--faint\); \}/);
   assert.match(css, /\.network-picker-b \{ fill: #ffffff; \}/);
   assert.match(css, /\.network-picker-button \{[^}]*min-height: 40px;[^}]*background: var\(--surface-2\)/s);
   // The button lives at the bar's right edge, so the menu opens leftward

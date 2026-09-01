@@ -19,6 +19,10 @@
   /* The Bitcoin Core icon's orange. Both themes share it: it is a brand
    * signal (mainnet = real coins), not a surface colour. */
   --bitcoin: #f7931a;
+  /* The other Bitcoin Core network colours, shared across themes for the
+   * same reason: green testnet, purple signet. Regtest reuses --faint. */
+  --testnet: #22c55e;
+  --signet: #a855f7;
   --paper: #f3efe4;
   --playing-card-bg: #292929;
   --playing-card-fg: #eeeeee;
@@ -690,9 +694,10 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
 /* The network picker rides the bar's action row, between the GitHub link and
    the theme toggle: it states what the tools are set to the way the version
    states what build they are. The button takes the secondary header-control
-   look, with the Bitcoin Core icon's orange coin beside the network's name —
-   the same convention mempool.space uses in its network switcher. Testnet
-   drops the coin to the faint grey: orange is reserved for real coins. */
+   look, with the Bitcoin Core icon's coin beside the network's name — the
+   same convention mempool.space uses in its network switcher. The coin takes
+   the colour Core gives the network: yellow mainnet, green testnet, purple
+   signet, grey regtest. */
 .network-picker { position: relative; flex: 0 0 auto; }
 .network-picker-button {
   display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 12px;
@@ -703,7 +708,9 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
 .network-picker-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .network-picker-glyph { display: block; flex: 0 0 auto; }
 .network-picker-coin { fill: var(--bitcoin); }
-.network-picker[data-network="testnet"] .network-picker-coin { fill: var(--faint); }
+.network-picker[data-network="testnet"] .network-picker-coin { fill: var(--testnet); }
+.network-picker[data-network="signet"] .network-picker-coin { fill: var(--signet); }
+.network-picker[data-network="regtest"] .network-picker-coin { fill: var(--faint); }
 .network-picker-b { fill: #ffffff; }
 .network-picker-chevron { color: var(--accent); transition: transform 120ms ease; }
 .network-picker-button[aria-expanded="true"] .network-picker-chevron { transform: rotate(180deg); }
@@ -724,13 +731,13 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
   border: 0; border-radius: 8px; background: transparent; color: var(--fg);
   text-align: left; cursor: pointer;
 }
-/* Each option carries its network's dot, the mempool.space switcher
-   convention: orange for mainnet, grey for testnet. */
-.network-picker-option::before {
-  content: ""; flex: 0 0 auto; width: 10px; height: 10px; margin-top: 5px; border-radius: 50%;
-  background: var(--bitcoin);
-}
-.network-picker-option[data-network="testnet"]::before { background: var(--faint); }
+/* Each option carries its network's coin, the mempool.space switcher
+   convention: yellow mainnet, green testnet, purple signet, grey regtest. */
+.network-picker-option-glyph { flex: 0 0 auto; margin-top: 3px; }
+.network-picker-option-coin { fill: var(--bitcoin); }
+.network-picker-option[data-network="testnet"] .network-picker-option-coin { fill: var(--testnet); }
+.network-picker-option[data-network="signet"] .network-picker-option-coin { fill: var(--signet); }
+.network-picker-option[data-network="regtest"] .network-picker-option-coin { fill: var(--faint); }
 .network-picker-option:hover, .network-picker-option:focus-visible { background: color-mix(in oklab, var(--accent) 14%, var(--surface-2)); outline: none; }
 .network-picker-option[aria-checked="true"] { background: color-mix(in oklab, var(--accent) 20%, var(--surface-2)); }
 .network-picker-option[aria-checked="true"] strong { color: var(--accent); }

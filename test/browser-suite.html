@@ -209,7 +209,7 @@
     const label = document.getElementById("network-picker-label");
     assert(picker && button && menu && label, "Header network picker is missing");
     assert(menu.hidden && button.getAttribute("aria-expanded") === "false", "Network menu did not start closed");
-    equal(label.textContent, "Mainnet", "Network picker did not start on Mainnet");
+    equal(label.textContent, "Bitcoin", "Network picker did not start on Bitcoin");
     equal(picker.dataset.network, "mainnet", "Network picker did not tag mainnet");
     button.click();
     assert(!menu.hidden && button.getAttribute("aria-expanded") === "true", "Network menu did not open");
@@ -228,9 +228,22 @@
     for (const id of ["sp-network", "psbt-network", "psbted-network"]) {
       equal(document.getElementById(id).value, "testnet", id + " did not follow the header network");
     }
+    // Signet and regtest are their own picks, but they share the testnet
+    // formats, so every tool's network control stays on testnet for them.
+    for (const network of ["signet", "regtest"]) {
+      button.click();
+      menu.querySelector(`[data-network="${network}"]`).click();
+      equal(label.textContent, network === "signet" ? "Signet" : "Regtest", "Network picker did not switch to " + network);
+      equal(picker.dataset.network, network, "Network picker did not tag " + network);
+      equal(document.getElementById("network").value, "1'", "Keys coin type did not follow " + network);
+      equal(document.getElementById("msig-network").value, "1", "Multisig coin type did not follow " + network);
+      for (const id of ["sp-network", "psbt-network", "psbted-network"]) {
+        equal(document.getElementById(id).value, "testnet", id + " did not follow " + network);
+      }
+    }
     button.click();
     menu.querySelector('[data-network="mainnet"]').click();
-    equal(label.textContent, "Mainnet", "Network picker did not switch back to Mainnet");
+    equal(label.textContent, "Bitcoin", "Network picker did not switch back to Bitcoin");
     equal(document.getElementById("network").value, "0'", "Keys coin type did not restore mainnet");
     assert(document.getElementById("derivation-path").value.startsWith("m/84'/0'/0'"), "Derivation path did not restore mainnet");
     equal(document.getElementById("msig-network").value, "0", "Multisig coin type did not restore mainnet");
