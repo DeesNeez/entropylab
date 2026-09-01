@@ -79,11 +79,10 @@ test("the header network picker sets the network every tool defaults to", () => 
     const picker = markup.indexOf('id="network-picker"');
     assert.ok(header >= 0 && header < picker && picker < wrapper, "the network picker must sit inside the header");
     const controls = markup.indexOf('class="download-controls"');
-    const github = markup.indexOf("github-repo-link");
-    const theme = markup.indexOf('id="theme-toggle"');
+    const download = markup.indexOf("download-html");
     assert.ok(
-      controls >= 0 && controls < picker && github < picker && picker < theme,
-      "the picker belongs inside the header controls, between the GitHub link and the theme toggle",
+      controls >= 0 && controls < picker && download < picker,
+      "the picker belongs inside the header controls, after the download button",
     );
     assert.match(markup, /id="network-picker" data-network="mainnet"/);
     assert.match(markup, /id="network-picker-button"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"[^>]*aria-controls="network-picker-menu"/);
@@ -152,14 +151,20 @@ test("the header network picker sets the network every tool defaults to", () => 
   // The button lives at the bar's right edge, so the menu opens leftward
   // from its right edge rather than past the viewport.
   assert.match(css, /\.network-picker-menu \{[^}]*position: absolute;[^}]*right: 0;[^}]*background: var\(--surface-2\)/s);
-  // Narrow screens collapse it to a compact glyph chip hung off the bar's
-  // bottom-right corner, below the theme toggle — the row is full, so it
-  // cannot stay in the flex flow. The 75% straddle clears the 40px controls
-  // above the rule and the content below it.
+  // The coin carries the network on its own, so it is sized with the download
+  // and GitHub marks either side of it rather than the 16px its SVG ships.
+  assert.match(css, /\.network-picker-glyph \{[^}]*width: 18px; height: 18px; \}/);
+  // Narrow screens drop the label and chevron and square the control off
+  // against the 40px theme toggle, keeping it in the control row: it holds its
+  // place among the header buttons instead of hanging out of the bar.
   const narrow = css.slice(css.indexOf("@media (max-width: 719px)"));
   assert.match(narrow, /\.network-picker-label, \.network-picker-chevron \{ display: none; \}/);
-  assert.match(narrow, /\.network-picker \{[^}]*position: absolute; right: var\(--site-header-pad\); bottom: 0; transform: translateY\(75%\)/s);
-  assert.match(narrow, /\.network-picker-button \{ min-height: 0; padding: 4px 8px; \}/);
+  assert.match(narrow, /\.network-picker \{ flex: 0 0 40px; \}/);
+  assert.match(narrow, /\.network-picker-button \{ width: 40px; padding: 0; justify-content: center; \}/);
+  // It must not leave the flow: absolute positioning hung it below the bar.
+  assert.doesNotMatch(narrow, /\.network-picker \{[^}]*position: absolute/s);
+  // The row keeps its 40px touch targets rather than shrinking to a chip.
+  assert.doesNotMatch(narrow, /\.network-picker-button \{[^}]*min-height: 0/s);
 });
 
 test("advanced derivation fields use the shared responsive settings grid", () => {
@@ -1020,7 +1025,12 @@ test("the page closes on a footer in both markups", () => {
     // spellings.
     assert.match(
       markup,
-      /<footer class="page-footer muted no-print"><div>Team Ooga Booga<\/div><div class="page-footer-emoji">(?:🪨|\\u\{1FAA8\}) (?:🔥|\\u\{1F525\}) (?:🎲|\\u\{1F3B2\}) (?:🍌|\\u\{1F34C\})<\/div><div>Since 964013 (?:·|\\x[Bb]7|\\u00[Bb]7) <span class="page-footer-build">v\{\{VERSION\}\} (?:·|\\x[Bb]7|\\u00[Bb]7) commit <code>\{\{COMMIT_SHORT\}\}<\/code> <img class="page-footer-lifehash" id="page-footer-lifehash" data-commit="\{\{COMMIT\}\}" width="20" height="20" alt="LifeHash of the build commit" hidden><\/span><\/div><\/footer>/,
+      /<footer class="page-footer muted no-print"><div>Team Ooga Booga<\/div><div class="page-footer-emoji">(?:🪨|\\u\{1FAA8\}) (?:🔥|\\u\{1F525\}) (?:🎲|\\u\{1F3B2\}) (?:🍌|\\u\{1F34C\})<\/div><div>Since 964013 (?:·|\\x[Bb]7|\\u00[Bb]7) <span class="page-footer-build">v\{\{VERSION\}\} (?:·|\\x[Bb]7|\\u00[Bb]7) commit <code>\{\{COMMIT_SHORT\}\}<\/code> <img class="page-footer-lifehash" id="page-footer-lifehash" data-commit="\{\{COMMIT\}\}" width="20" height="20" alt="LifeHash of the build commit" hidden><\/span><\/div><div class="page-footer-links">/,
+    );
+    // A fourth row closes it: the two controls that left the header bar.
+    assert.match(
+      markup,
+      /<div class="page-footer-links"><a class="btn secondary github-repo-link"[\s\S]*?<button type="button" class="theme-toggle" id="theme-toggle"[\s\S]*?<\/button><\/div><\/footer>/,
     );
     // It closes the wrap, so nothing of the page follows it.
     assert.ok(
@@ -1181,9 +1191,8 @@ test("the lockup steps down again below 400px", () => {
   const narrow = css.slice(css.indexOf("@media (max-width: 400px)"));
   assert.ok(narrow, "the 400px breakpoint is missing");
   assert.match(narrow, /\.site-title \{ font-size: 17px; \}/);
-  // 6px flex gap plus this margin, down from 12px, so the version closes up on
-  // the wordmark as both shrink.
-  assert.match(narrow, /\.site-version \{ font-size: 11px; margin-left: 2px; \}/);
+  // The picker holds a fourth slot in the control row, so the icons close up.
+  assert.match(narrow, /\.download-controls \{ gap: 4px; \}/);
   // It has to follow the 719px block, which sets the wordmark to 19px, or the
   // cascade hands the wider rule the win at equal specificity.
   assert.ok(
@@ -1206,7 +1215,7 @@ test("the layout has a 320px floor that the fixed header shares", () => {
 
 test("header theme toggle cycles dark, light, and OS themes without a flash", () => {
   for (const markup of [template, app]) {
-    assert.match(markup, /class="theme-toggle header-button" id="theme-toggle" data-theme-mode="dark" aria-label="Theme: dark\. Switch to light"/);
+    assert.match(markup, /class="theme-toggle" id="theme-toggle" data-theme-mode="dark" aria-label="Theme: dark\. Switch to light"/);
   }
   assert.match(template, /<script>\(function\(\)\{try\{var m=localStorage\.getItem\("entropylab-theme"\)/);
   assert.match(app, /var hodlThemeModes=\["dark","light"\],hodlThemeStorageKey="entropylab-theme"/);
@@ -1232,7 +1241,10 @@ test("header theme toggle cycles dark, light, and OS themes without a flash", ()
   assert.match(appSource, /hodlInitSecretFieldAutoClear\(\);\s*hodlInitNetworkPicker\(\);\s*hodlInitTheme\(\);/);
   assert.match(css, /:root\[data-theme="light"\] \{\s*color-scheme: light;/);
   assert.match(css, /@media print \{\s*:root, :root\[data-theme\] \{/);
-  assert.match(css, /\.download-controls \.theme-toggle \{ flex: 0 0 40px; width: 40px; align-self: center; \}/);
+  // Off the bar it keeps the shared 44px chrome instead of the header's 40px
+  // square: nothing in the header squeezes it any more.
+  assert.doesNotMatch(css, /\.download-controls \.theme-toggle/);
+  assert.match(css, /\.seed-keyboard-toggle, \.theme-toggle \{[^}]*flex: 0 0 44px; width: 44px; min-height: 44px;/s);
 });
 
 test("the site header is fixed, carries the logo, and holds the version, download, and theme controls", () => {
@@ -1242,9 +1254,18 @@ test("the site header is fixed, carries the logo, and holds the version, downloa
     const wrapper = markup.indexOf('<div class="wrap">');
     assert.ok(header >= 0, "the fixed site header is missing");
     assert.ok(header < wrapper, "the site header must come before the page wrapper");
-    assert.match(markup, /<span class="site-logo" aria-hidden="true"><\/span>\s*<span class="site-title">EntropyLab<\/span>\s*<span class="site-version">/);
-    for (const control of [/class="site-version-number">v\{\{VERSION\}\}</, /class="btn secondary download-html header-button"/, /class="btn secondary github-repo-link header-button"/, /id="theme-toggle"/]) {
+    assert.match(markup, /<span class="site-logo" aria-hidden="true"><\/span>\s*<span class="site-title">EntropyLab<\/span>/);
+    // The version left the bar: it is the footer's build stamp now, and the
+    // row needed the width for the network picker.
+    assert.doesNotMatch(markup.slice(header, wrapper), /site-version/);
+    for (const control of [/class="btn secondary download-html header-button"/, /id="network-picker-button"/]) {
       assert.match(markup.slice(header, wrapper), control, `the fixed header is missing ${control}`);
+    }
+    // The repository link and the theme toggle close the page instead: they
+    // are in the footer's fourth row, not the bar.
+    for (const moved of [/github-repo-link/, /id="theme-toggle"/]) {
+      assert.doesNotMatch(markup.slice(header, wrapper), moved, `${moved} should have left the header`);
+      assert.match(markup.slice(markup.indexOf('class="page-footer-links"')), moved);
     }
     // The in-flow title block folded into the marketing card, so the wrapper
     // opens on that card and carries no second header of its own.
@@ -1267,17 +1288,10 @@ test("the site header is fixed, carries the logo, and holds the version, downloa
   assert.match(css, /\.site-title \{[^}]*font-family: var\(--display\);[^}]*color: #ffffff;/);
   assert.match(css, /:root\[data-theme="light"\] \.site-title \{ color: #000000; \}/);
   assert.match(css, /@media \(max-width: 719px\) \{[\s\S]*?\.site-title \{ font-size: 19px; \}/);
-  assert.match(css, /\.site-version \{[^}]*flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px;/s);
-  // The version echoes the kicker's accent and weight, but stays far below its
-  // display tracking, which reads as spread-out in a row of controls.
-  assert.match(css, /\.site-version \{[^}]*text-transform: uppercase; color: var\(--accent\); font-weight: 600;/s);
-  const tracking = (rule) => Number(css.match(new RegExp(`${rule} \\{[^}]*letter-spacing: ([\\d.]+)em`, "s"))?.[1]);
-  assert.ok(tracking("\\.site-version") < tracking("\\.kicker") / 2, "the header version kept the kicker's display tracking");
-  // The uppercase stops at the version string, so its "v" prefix stays lower
-  // case in the label the build stamps.
-  assert.match(css, /\.site-version-number \{[^}]*text-transform: none;/);
-  // online.js never fetches or rewrites the version label: the build-stamped
-  // markup is the only source, and the app makes no runtime requests.
+  // No version rides the lockup any more, at any width.
+  assert.doesNotMatch(css, /\.site-version/);
+  // online.js never fetched or rewrote the version label, and there is none to
+  // rewrite now: the app makes no runtime requests.
   assert.doesNotMatch(online, /fetch\s*\(|site-version|innerHTML/);
   // Content clears the fixed header on screen, and reclaims the space in print.
   assert.match(css, /\.wrap \{ max-width: 1000px; margin: 0 auto; padding: calc\(var\(--site-header-height\) \+ 20px\) 16px 0; \}/);
@@ -1344,8 +1358,10 @@ test("the favicon ships inside the document instead of the assets directory", ()
 
 test("narrow screens keep the fixed header on one row by hiding control labels", () => {
   assert.match(css, /@media \(max-width: 719px\) \{[\s\S]*?\.control-label \{ display: none; \}/);
-  // Icon-only buttons match the theme toggle's 40px square.
-  assert.match(css, /@media \(max-width: 719px\) \{[\s\S]*?\.download-controls \.btn:is\(\.download-html, \.github-repo-link\) \{ flex: 0 0 40px; width: 40px; padding: 0; justify-content: center; \}/);
+  // The footer link collapses with them, squared off against the 44px toggle.
+  assert.match(css, /@media \(max-width: 719px\) \{[\s\S]*?\.page-footer-links \.github-repo-link \{ flex: 0 0 44px; width: 44px; padding: 0; justify-content: center; \}/);
+  // The download button squares off against the 40px network picker.
+  assert.match(css, /@media \(max-width: 719px\) \{[\s\S]*?\.download-controls \.download-html \{ flex: 0 0 40px; width: 40px; padding: 0; justify-content: center; \}/);
   for (const markup of [template, app]) {
     // The version reads as plain text beside the logo; "v0.1.3" already says
     // what it is, so it never carries a control label.
@@ -1355,18 +1371,17 @@ test("narrow screens keep the fixed header on one row by hiding control labels",
     assert.match(markup, /<svg class="download-mark"[^>]*><path d="M12 3v12M7 11l5 5 5-5M5 21h14"\/><\/svg><span class="control-label">Download<\/span><\/a>/);
     assert.match(css, /\.download-mark \{ display: block; flex: 0 0 auto; \}/);
     assert.doesNotMatch(css, /@media \(max-width: 719px\) \{[\s\S]*?\.download-mark \{/);
-    // One rule owns the icon-to-label gap for both buttons, so they cannot drift.
+    // One rule owns the icon-to-label gap in each row, so they cannot drift.
     assert.match(css, /\.download-controls > a \{ display: inline-flex; align-items: center; gap: 6px;/);
-    assert.doesNotMatch(css, /\.download-controls \.github-repo-link \{ display: inline-flex/);
+    assert.match(css, /\.page-footer-links > a \{ display: inline-flex; align-items: center; gap: 6px;/);
+    assert.doesNotMatch(css, /\.download-controls \.github-repo-link/);
     // Centring the label's em box leaves its caps a pixel below the icon's
     // centre line, so the label carries an optical nudge back up.
     assert.match(css, /\.control-label \{ position: relative; top: -1px; \}/);
     assert.match(markup, /<span class="control-label">GitHub<\/span><\/a>/);
     // Each accessible name still contains its visible label (WCAG 2.5.3).
     assert.match(markup, /class="btn secondary download-html header-button"[^>]*aria-label="Download EntropyLab"/);
-    // The "(Latest)" half of the version is the one thing narrow bars drop.
-    assert.match(css, /@media \(max-width: 719px\) \{[\s\S]*?\.site-version-tag \{ display: none; \}/);
-    assert.match(markup, /class="btn secondary github-repo-link header-button"[^>]*aria-label="View the EntropyLab GitHub repository in a new tab"/);
+    assert.match(markup, /class="btn secondary github-repo-link"[^>]*aria-label="View the EntropyLab GitHub repository in a new tab"/);
   }
 });
 
