@@ -461,7 +461,7 @@ hodlRootEl.innerHTML = `
       <div class="key-tab-strip"><div class="key-tabs" id="key-tabs" role="tablist" aria-label="Keys"></div><div class="add-item-control"><button class="add-key" id="add-key" type="button" aria-label="Open Key Station to derive another key" aria-describedby="add-key-tooltip">+</button><span class="add-item-tooltip" id="add-key-tooltip" role="tooltip">Open Key Station to derive another key</span></div><div class="add-item-control"><button class="add-key remove-key" id="delete-key" type="button" aria-label="Delete current key" aria-describedby="delete-key-tooltip" disabled>−</button><span class="add-item-tooltip" id="delete-key-tooltip" role="tooltip">Delete this key</span></div></div>
     </section>
     <section class="card no-print" id="calc-card" role="tabpanel" hidden>
-      <div class="row segmented-control" id="modes" role="group" aria-label="Key input mode"></div>
+      <div class="row segmented-control key-mode-control" id="modes" role="group" aria-label="Key input mode"></div>
       <div class="key-summary" id="key-summary" hidden>
         <img class="key-summary-lifehash" id="key-summary-lifehash" width="48" height="48" alt="" hidden>
         <div class="key-summary-text">
@@ -893,14 +893,58 @@ hodlRootEl.innerHTML = `
   </div>
 `;
 if (/^(www\.)?entropylab\.online$/i.test(location.hostname)) document.getElementById("online-warning")?.removeAttribute("hidden");
-var hodlKeyModes = ["dice", "cards", "hex", "seed", "key"], hodlBrainLabAck = false, hodlCardRanks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K"], hodlDirectCardRanks = ["A", "2", "3", "4", "5", "6", "7", "8"], hodlCardSuits = [{ code: "S", symbol: "♠", label: "Spades", red: false }, { code: "H", symbol: "♥", label: "Hearts", red: true }, { code: "C", symbol: "♣", label: "Clubs", red: false }, { code: "D", symbol: "♦", label: "Diamonds", red: true }], hodlCardSuit = "", hodlCardRank = "", hodlCardMethod = "hashed", hodlSeedMethod = "words", hodlSeedZeroIndexed = false, hodlCardColemanSymbols = false, hodlKeyMode = "dice", hodlDiceMethod = "coldcard", hodlTargetWordCount = 24, hodlEntropyFormat = "hex", hodlDiceCoinPositions = [], hodlPickedLastWord = "", hodlWalletResult = null, hodlRevealPrivate = false, hodlWalletDatBirthday = "genesis", hodlModesEl = hodlElement("#modes"), hodlFormEl = hodlElement("#form"), hodlOutEl = hodlElement("#out");
+var hodlKeyModes = ["dice", "cards", "hex", "seed", "key"], hodlKeyModeLabels = { dice: "Dice rolls", cards: "Cards", hex: "Number bases", seed: "Seed phrase", key: "Private key" }, hodlBrainLabAck = false, hodlCardRanks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K"], hodlDirectCardRanks = ["A", "2", "3", "4", "5", "6", "7", "8"], hodlCardSuits = [{ code: "S", symbol: "♠", label: "Spades", red: false }, { code: "H", symbol: "♥", label: "Hearts", red: true }, { code: "C", symbol: "♣", label: "Clubs", red: false }, { code: "D", symbol: "♦", label: "Diamonds", red: true }], hodlCardSuit = "", hodlCardRank = "", hodlCardMethod = "hashed", hodlSeedMethod = "words", hodlSeedZeroIndexed = false, hodlCardColemanSymbols = false, hodlKeyMode = "dice", hodlDiceMethod = "coldcard", hodlTargetWordCount = 24, hodlEntropyFormat = "hex", hodlDiceCoinPositions = [], hodlPickedLastWord = "", hodlWalletResult = null, hodlRevealPrivate = false, hodlWalletDatBirthday = "genesis", hodlModesEl = hodlElement("#modes"), hodlFormEl = hodlElement("#form"), hodlOutEl = hodlElement("#out");
 var hodlManualCalculationsOpen = false;
+function hodlCreateKeyMethodIcon(mode) {
+  let ns = "http://www.w3.org/2000/svg", span = document.createElement("span"), svg = document.createElementNS(ns, "svg");
+  let add = (tag, attributes) => {
+    let node = document.createElementNS(ns, tag);
+    Object.entries(attributes).forEach(([name, value]) => node.setAttribute(name, value));
+    svg.appendChild(node);
+  };
+  span.className = "key-method-icon";
+  span.setAttribute("aria-hidden", "true");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.8");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("focusable", "false");
+  svg.setAttribute("aria-hidden", "true");
+  if (mode === "dice") {
+    add("rect", { x: "3.5", y: "3.5", width: "17", height: "17", rx: "3.2" });
+    [[8, 8], [16, 8], [12, 12], [8, 16], [16, 16]].forEach(([cx, cy]) => add("circle", { cx: String(cx), cy: String(cy), r: "1.15", fill: "currentColor", stroke: "none" }));
+  } else if (mode === "cards") {
+    add("rect", { x: "7.5", y: "3", width: "12.5", height: "16.5", rx: "2.1" });
+    add("rect", { x: "3.5", y: "5.5", width: "12.5", height: "16", rx: "2.1", fill: "var(--key-method-card-bg)", "data-part": "card-front" });
+    add("path", { d: "M9.75 10.5 12.5 13l-2.75 2.5L7 13l2.75-2.5Z", fill: "currentColor", stroke: "none" });
+  } else if (mode === "hex") {
+    add("rect", { x: "3.5", y: "4.5", width: "7", height: "15", rx: "3.5" });
+    add("path", { d: "m14.5 8 3-3v14m-3.5 0h7" });
+  } else if (mode === "seed") {
+    [7, 12, 17].forEach((y) => {
+      add("circle", { cx: "5", cy: String(y), r: "1", fill: "currentColor", stroke: "none" });
+      add("path", { d: `M9 ${y}h10` });
+    });
+  } else {
+    add("circle", { cx: "7.5", cy: "7.5", r: "4.2" });
+    add("path", { d: "m10.5 10.5 9.7 9.7m-3.1-3.1 2.2-2.2m-5.1-.9 2.2-2.2" });
+  }
+  span.appendChild(svg);
+  return span;
+}
 hodlKeyModes.forEach((e) => {
-  let t = document.createElement("button"), active = e === hodlKeyMode;
+  let t = document.createElement("button"), label = document.createElement("span"), active = e === hodlKeyMode;
   t.type = "button";
   t.className = "tab" + (active ? " active" : "");
+  t.dataset.keyMode = e;
   t.setAttribute("aria-pressed", String(active));
-  t.textContent = e === "dice" ? "Dice rolls" : e === "cards" ? "Cards" : e === "hex" ? "Number bases" : e === "seed" ? "Seed phrase" : "Private key";
+  t.setAttribute("aria-label", hodlKeyModeLabels[e]);
+  t.title = hodlKeyModeLabels[e];
+  label.className = "key-mode-label";
+  label.textContent = hodlKeyModeLabels[e];
+  t.append(hodlCreateKeyMethodIcon(e), label);
   t.onclick = () => hodlSetMode(e);
   hodlModesEl.appendChild(t);
 });
@@ -9840,15 +9884,17 @@ function hodlKeyTabKeydown(event, index) {
 }
 var hodlKeySilhouette = "M512 176c0 97.2-78.8 176-176 176-11.2 0-22.2-1.1-32.8-3.1l-24 27c-4.4 4.9-10.8 8.1-17.9 8.1H224v40c0 13.3-10.7 24-24 24h-40v40c0 13.3-10.7 24-24 24H24c-13.3 0-24-10.7-24-24v-78.1c0-6.4 2.5-12.5 7-17l161.8-161.8c-5.7-17.4-8.8-35.9-8.8-55.2C160 78.8 238.8 0 336 0s176 78.8 176 176zM374 112a54 54 0 1 0 0 108 54 54 0 1 0 0-108z";
 function hodlCreateMsigIcon(monochrome = false) {
-  let ns = "http://www.w3.org/2000/svg", darkest = monochrome ? "currentColor" : "#4b4f55", middle = monochrome ? "currentColor" : "#888d94", span = document.createElement("span"), svg = document.createElementNS(ns, "svg");
+  let ns = "http://www.w3.org/2000/svg", darkest = monochrome ? "currentColor" : "#4b4f55", middle = monochrome ? "currentColor" : "#888d94", span = document.createElement("span"), svg = document.createElementNS(ns, "svg"), assembly = document.createElementNS(ns, "g"), keys = document.createElementNS(ns, "g");
   span.className = "multisig-tab-icon" + (monochrome ? " bench-tab-icon" : "");
   span.setAttribute("aria-hidden", "true");
-  svg.setAttribute("viewBox", "0 -4 49 40");
+  svg.setAttribute("viewBox", monochrome ? "0 0 21 24" : "0 -4 49 40");
   svg.setAttribute("focusable", "false");
   svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("data-keyhole-cx", "34");
   svg.setAttribute("data-keyhole-cy", "10.5");
   svg.setAttribute("data-keyhole-r", "2.808");
+  if (monochrome) assembly.setAttribute("transform", "translate(-1.8 4.65) scale(.431)");
+  keys.setAttribute("data-part", "key-cluster");
   let ring = document.createElementNS(ns, "path");
   ring.setAttribute("data-part", "keychain-ring");
   ring.setAttribute("d", "M32.14 7.53 A7.78 7.78 0 1 1 36.97 12.36");
@@ -9857,7 +9903,7 @@ function hodlCreateMsigIcon(monochrome = false) {
   ring.setAttribute("stroke-width", "1.7");
   ring.setAttribute("stroke-linecap", "round");
   ring.setAttribute("stroke-linejoin", "round");
-  svg.appendChild(ring);
+  assembly.appendChild(ring);
   [["key-back", darkest, -28, monochrome ? ".52" : "1"], ["key-middle", middle, 0, monochrome ? ".76" : "1"], ["key-front", monochrome ? "currentColor" : "#d1d4d8", 28, "1"]].forEach(([part, fill, angle, opacity]) => {
     let path = document.createElementNS(ns, "path");
     path.setAttribute("data-part", part);
@@ -9867,8 +9913,9 @@ function hodlCreateMsigIcon(monochrome = false) {
     path.setAttribute("clip-rule", "evenodd");
     path.setAttribute("opacity", opacity);
     path.setAttribute("transform", "translate(34 10.5) rotate(" + angle + ") scale(.052) translate(-374 -166)");
-    svg.appendChild(path);
+    keys.appendChild(path);
   });
+  assembly.appendChild(keys);
   let thread = document.createElementNS(ns, "path");
   thread.setAttribute("data-part", "keychain-thread");
   thread.setAttribute("d", "M36.97 12.36 A7.78 7.78 0 0 0 45 10.5");
@@ -9877,7 +9924,8 @@ function hodlCreateMsigIcon(monochrome = false) {
   thread.setAttribute("stroke-width", "1.7");
   thread.setAttribute("stroke-linecap", "round");
   thread.setAttribute("stroke-linejoin", "round");
-  svg.appendChild(thread);
+  assembly.appendChild(thread);
+  svg.appendChild(assembly);
   span.appendChild(svg);
   return span;
 }
@@ -10781,6 +10829,7 @@ function hodlSyncSegmentedControls() {
     if (!group.getClientRects().length) return;
     let buttons = [...group.children].filter((child) => child.matches(".tab"));
     group.classList.remove("is-stacked");
+    if (group.classList.contains("key-mode-control")) return;
     if (buttons.length < 2) return;
     let firstTop = buttons[0].offsetTop, wrapped = buttons.some((button) => Math.abs(button.offsetTop - firstTop) > 1);
     group.classList.toggle("is-stacked", wrapped);

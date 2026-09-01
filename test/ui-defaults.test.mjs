@@ -317,7 +317,7 @@ test("hashed cards can match Ian Coleman's suit-symbol SHA-256 transcript", () =
 });
 
 test("Number bases offers exact Base 2, 4, 8, 16, Crockford Base32, and Base64-alphabet input", () => {
-  assert.match(template, />Number bases<\/button>/);
+  assert.match(appSource, /hex: "Number bases"/);
   assert.doesNotMatch(template, />Hex or binary<\/button>/);
   assert.ok(app.includes('formatChoices=["bin","base4","base8","hex","base32","base64"]'));
   assert.match(app, /name="entropy-format" value="\$\{id\}"/);
@@ -879,6 +879,44 @@ test("Station add controls stay pinned to the right of their tab strips", () => 
   assert.match(css, /\.key-tab-strip \{ display: flex; align-items: flex-end; min-width: 0; margin-top: 12px; \}/);
   assert.match(css, /\.key-tabs \{\s*display: flex;[^}]*flex: 1 1 auto; min-width: 0;/s);
   assert.match(css, /\.add-item-control \{ position: relative; display: inline-flex; flex: 0 0 auto; \}/);
+});
+
+test("Key Station methods become one accessible icon row on narrow screens", () => {
+  for (const markup of [template, appSource]) {
+    assert.match(markup, /class="row segmented-control key-mode-control" id="modes" role="group" aria-label="Key input mode"/);
+  }
+  assert.doesNotMatch(template, /Brain wallet — lab/);
+  assert.match(appSource, /hodlKeyModeLabels = \{ dice: "Dice rolls", cards: "Cards", hex: "Number bases", seed: "Seed phrase", key: "Private key" \}/);
+  assert.match(appSource, /function hodlCreateKeyMethodIcon\(mode\) \{/);
+  for (const mode of ["dice", "cards", "hex", "seed"]) {
+    assert.match(appSource, new RegExp(`mode === "${mode}"`), `${mode} icon branch is missing`);
+  }
+  assert.match(appSource, /else \{\s*add\("circle", \{ cx: "7\.5"/);
+  assert.match(appSource, /t\.dataset\.keyMode = e;/);
+  assert.match(appSource, /t\.setAttribute\("aria-label", hodlKeyModeLabels\[e\]\);/);
+  assert.match(appSource, /label\.className = "key-mode-label";/);
+  assert.match(appSource, /t\.append\(hodlCreateKeyMethodIcon\(e\), label\);/);
+  assert.match(appSource, /fill: "var\(--key-method-card-bg\)", "data-part": "card-front"/);
+  assert.match(css, /\.key-mode-control \{[^}]*flex-wrap: nowrap;[^}]*overflow-x: auto;/s);
+  assert.match(css, /\.key-mode-control > \.tab \{\s*--key-method-card-bg: var\(--bg\);/);
+  assert.match(css, /\.key-mode-control > \.tab:is\(\.active, \[aria-pressed="true"\]\),[\s\S]*?--key-method-card-bg: var\(--selection-accent\);/);
+  assert.match(css, /@media \(max-width: 719px\) \{[\s\S]*?\.key-mode-control > \.tab \{ flex: 1 0 44px; min-width: 44px; min-height: 44px;/);
+  assert.match(css, /@media \(max-width: 719px\) \{[\s\S]*?\.key-mode-control \.key-method-icon \{ display: inline-flex; \}[\s\S]*?\.key-mode-control \.key-mode-label \{ display: none; \}/);
+  assert.match(appSource, /if \(group\.classList\.contains\("key-mode-control"\)\) return;/);
+});
+
+test("Station icons keep the original SP mark while normalizing the MS key cluster", () => {
+  assert.match(css, /\.key-tab-icon\.key-tab-lab-icon\.bench-tab-icon,\s*\.multisig-tab-icon\.bench-tab-icon \{\s*flex: 0 0 18px; width: 18px; height: 18px;/);
+  assert.match(css, /\.bench-tab-icon svg \{ display: block; width: 100%; height: 100%; overflow: visible; \}/);
+  assert.match(css, /\.multisig-tab-icon\.bench-tab-icon \{ flex-basis: 21px; width: 21px; height: 24px; \}/);
+  assert.match(appSource, /svg\.setAttribute\("viewBox", monochrome \? "0 0 21 24" : "0 -4 49 40"\)/);
+  assert.match(appSource, /keys\.setAttribute\("data-part", "key-cluster"\)/);
+  assert.match(appSource, /if \(monochrome\) assembly\.setAttribute\("transform", "translate\(-1\.8 4\.65\) scale\(\.431\)"\)/);
+  assert.match(appSource, /svg\.setAttribute\("viewBox", "0 0 24 24"\)/);
+  assert.doesNotMatch(appSource, /coinCore/);
+  for (const factory of ["hodlCreateLabIcon", "hodlCreateBip85BenchIcon", "hodlCreateMsigIcon", "hodlCreateSilentPaymentsIcon"]) {
+    assert.match(appSource, new RegExp(`function ${factory}\\(`));
+  }
 });
 
 test("the delete control reads as unavailable on a Station tab", () => {

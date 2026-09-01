@@ -877,6 +877,61 @@
     document.querySelector('#workspace [data-workspace="calc"]').click();
     await until(() => !document.getElementById("key-manager").hidden, "key workspace");
   });
+  await test("Key Station methods stay horizontal and expose consistent icons", async () => {
+    const modes = document.getElementById("modes");
+    const buttons = [...modes.querySelectorAll("button")];
+    equal(buttons.length, 5);
+    equal(buttons.map((button) => button.dataset.keyMode).join(","), "dice,cards,hex,seed,key");
+    buttons.forEach((button) => {
+      assert(button.getAttribute("aria-label"), "An icon method is missing its accessible name");
+      assert(button.querySelector(".key-method-icon svg"), `${button.dataset.keyMode} is missing its SVG icon`);
+      assert(button.querySelector(".key-mode-label"), `${button.dataset.keyMode} is missing its wide-screen label`);
+    });
+    const cardButton = modes.querySelector('[data-key-mode="cards"]'), cardFront = cardButton.querySelector('[data-part="card-front"]');
+    assert(cardFront, "Cards icon is missing its opaque front card");
+    equal(getComputedStyle(cardFront).fill, getComputedStyle(cardButton).backgroundColor, "Front card does not mask the rear card on the default surface");
+    cardButton.click();
+    await wait(25);
+    equal(getComputedStyle(cardFront).fill, getComputedStyle(cardButton).backgroundColor, "Front card does not follow the selected surface");
+    buttons[0].click();
+    await wait(25);
+    const previousWidth = modes.style.width;
+    try {
+      modes.style.width = "210px";
+      dispatchEvent(new Event("resize"));
+      await wait(50);
+      assert(!modes.classList.contains("is-stacked"), "Key methods switched to the vertical fallback");
+      const top = buttons[0].offsetTop;
+      assert(buttons.every((button) => Math.abs(button.offsetTop - top) <= 1), "Key methods did not remain on one row");
+      assert(modes.scrollWidth > modes.clientWidth, "Constrained methods should remain reachable by horizontal scrolling");
+    } finally {
+      modes.style.width = previousWidth;
+      dispatchEvent(new Event("resize"));
+    }
+  });
+  await test("Station icons preserve their intended responsive footprints", async () => {
+    const stations = [
+      ["calc", "#key-tab-lab .bench-tab-icon", 18, 18],
+      ["bip85", "#bip85-tab-lab .bench-tab-icon", 18, 18],
+      ["msig", "#msig-tab-lab .bench-tab-icon", 21, 24],
+      ["sp", "#sp-tab-bench .bench-tab-icon", 18, 18],
+    ];
+    let stationColor = "";
+    for (const [workspace, selector, expectedWidth, expectedHeight] of stations) {
+      document.querySelector(`#workspace [data-workspace="${workspace}"]`).click();
+      const icon = await until(() => {
+        const candidate = document.querySelector(selector);
+        return candidate?.getClientRects().length ? candidate : null;
+      }, `${workspace} Station icon`);
+      const box = icon.getBoundingClientRect();
+      assert(Math.abs(box.height - expectedHeight) < 0.5, `${workspace} Station icon has the wrong decorative height`);
+      assert(Math.abs(box.width - expectedWidth) < 0.5, `${workspace} Station icon has the wrong optical width`);
+      if (!stationColor) stationColor = getComputedStyle(icon).color;
+      else equal(getComputedStyle(icon).color, stationColor);
+    }
+    document.querySelector('#workspace [data-workspace="calc"]').click();
+    await until(() => !document.getElementById("key-manager").hidden, "key workspace");
+  });
   await test("the tool strip advertises tools that are off its right edge", async () => {
     const strip = document.getElementById("workspace-tabs");
     const hint = document.getElementById("workspace-more");
