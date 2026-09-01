@@ -966,9 +966,6 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 #sp-modes + .station-key-source { margin-top: 20px; }
 .station-key-source > .label { margin: 0 0 8px; }
 .station-key-source > .field-note { display: block; margin: 8px 0 0; }
-.msig-key-reuse-toggle { margin-top: 12px; }
-.msig-station-key-source #msig-session-key-status:empty { display: none; }
-.msig-station-key-source + .msig-threshold-labels { margin-top: 0; }
 .session-key-picker { display: flex; flex-wrap: wrap; gap: 8px; }
 .session-key-picker[hidden] { display: none; }
 .session-key-option {
@@ -977,6 +974,23 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
   background: var(--surface-2); color: var(--fg); font-family: var(--mono); font-size: 13px; cursor: pointer;
 }
 .session-key-option.active { border-color: var(--accent); }
+.msig-session-keys { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.msig-session-keys[hidden] { display: none; }
+.msig-session-key {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 44px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface-2); color: var(--fg); font-family: var(--mono); font-size: 13px; cursor: pointer;
+}
+.msig-session-key.active { border-color: var(--accent); color: var(--fg); }
+.msig-key-reuse {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 0;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: color-mix(in oklab, var(--surface-2) 70%, var(--bg));
+}
+.msig-key-reuse[hidden] { display: none; }
+.msig-key-reuse-note { flex: 1 1 100%; margin: 0; }
+.msig-key-reuse-control { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.msig-key-reuse-path { width: 90px; font-family: var(--mono); }
 .msig-key-ident { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
 .msig-key-ident[hidden] { display: none; }
 .msig-key-ident-fp { font-family: var(--mono); font-size: 13px; letter-spacing: 0.04em; }

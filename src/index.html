@@ -287,16 +287,6 @@ words, pick one of the checksum words.</span></span>
         <button class="btn secondary" id="msig-edit-inputs" type="button">Edit input</button>
       </div>
       <div class="msig-lab" id="msig-lab">
-      <div class="station-key-source msig-station-key-source">
-        <p class="label">Bring in a key from Key Station</p>
-        <div class="session-key-picker" id="msig-session-keys" role="group" aria-label="Compatible Key Station keys" hidden></div>
-        <p class="field-note">Choose a compatible HD-root key from this session, or paste a co-signer extended public key below.</p>
-        <label class="choice msig-key-reuse-toggle">
-          <input id="msig-reuse-session-keys" type="checkbox">
-          <span><strong>Allow key reuse</strong><span class="desc">Keep selected Key Station keys available for more than one co-signer input.</span></span>
-        </label>
-        <p class="field-note" id="msig-session-key-status" aria-live="polite"></p>
-      </div>
       <div class="msig-threshold-labels">
         <label for="msig-m-number"><span>Signatures needed to spend (m)</span><input class="msig-threshold-number" id="msig-m-number" type="number" min="1" max="15" step="1" value="2" inputmode="numeric" aria-describedby="msig-threshold-help"></label>
         <label for="msig-n-number"><span>Total signing keys (n)</span><input class="msig-threshold-number" id="msig-n-number" type="number" min="1" max="15" step="1" value="3" inputmode="numeric" aria-describedby="msig-threshold-help"></label>

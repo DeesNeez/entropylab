@@ -1618,33 +1618,45 @@
     await until(() => !document.getElementById("key-manager").hidden, "key workspace after SP Station test");
   });
 
-  await test("MS Station assigns Key Station keys globally and only reuses them when opted in", async () => {
+  await test("MS Station offers every Key Station key on each co-signer and a derivation path for reuse", async () => {
     document.querySelector('#workspace [data-workspace="msig"]').click();
     await until(() => !document.getElementById("msig-manager").hidden, "MS Station");
-    const reuse = document.getElementById("msig-reuse-session-keys");
-    assert(reuse && !reuse.checked, "MS Station key reuse was not opt in");
-    let option = document.querySelector("#msig-session-keys .session-key-option");
-    assert(option, "MS Station did not offer the compatible Key Station key in its global picker");
-    const first = document.getElementById("msig-x-0");
-    first.focus();
-    option.click();
-    assert(first.value.trim(), "The global MS Station picker did not populate the focused co-signer input");
-    assert(!first.closest(".msig-key-row").querySelector(".msig-key-ident").hidden, "The selected key identity was not shown above its co-signer input");
-    assert(!document.querySelector("#msig-session-keys .session-key-option"), "An assigned key remained available while reuse was off");
+    assert(!document.getElementById("msig-session-keys"), "MS Station kept the global key picker above the co-signers");
+    const rows = [...document.querySelectorAll("#msig-keys .msig-key-row")];
+    assert(rows.length >= 2, "MS Station did not start with at least two co-signer rows");
+    const rowOption = (row) => row.querySelector(".msig-session-keys .msig-session-key");
+    assert(rows.every((row) => rowOption(row)), "A co-signer row did not offer the compatible Key Station key");
 
-    reuse.click();
-    option = document.querySelector("#msig-session-keys .session-key-option");
-    assert(option, "Enabling reuse did not restore the assigned key to the global picker");
+    const first = document.getElementById("msig-x-0");
+    rowOption(rows[0]).click();
+    assert(first.value.trim(), "The first co-signer row did not populate from its own picker");
+    assert(!rows[0].querySelector(".msig-key-ident").hidden, "The selected key identity was not shown above its co-signer input");
+    assert(rowOption(rows[0]).classList.contains("active"), "The picked key was not marked active on the first row");
+
+    // Every key stays selectable on every other row; picking the same key
+    // again offers a derivation path so its descriptor public keys differ.
     const second = document.getElementById("msig-x-1");
-    second.focus();
-    option.click();
-    assert(second.value.trim(), "Reuse did not populate a second co-signer input");
-    assert(!second.closest(".msig-key-row").querySelector(".msig-key-ident").hidden, "The reused key identity was not shown above the second input");
-    assert(document.querySelector("#msig-session-keys .session-key-option"), "The key disappeared from the global picker while reuse was on");
+    const secondOption = rowOption(rows[1]);
+    assert(secondOption, "An assigned key disappeared from the second row's picker");
+    const secondFingerprint = secondOption.dataset.fingerprint;
+    secondOption.click();
+    assert(second.value.trim(), "The second co-signer row did not populate the reused key");
+    const reusePanel = rows[1].querySelector(".msig-key-reuse");
+    assert(reusePanel && !reusePanel.hidden, "Reusing a key did not offer a derivation path on the second row");
+    assert(reusePanel.querySelector(".msig-key-reuse-note").textContent.includes("Co-signer 1"), "The reuse note did not name the other co-signer");
+    const reusePath = reusePanel.querySelector(".msig-key-reuse-path");
+    assert(reusePath.value === "1", `The suggested derivation path was not /1 (got ${reusePath.value || "blank"})`);
+    assert(reusePanel.querySelector(".msig-key-reuse-clear").hidden, "Remove path showed before a path was applied");
+    reusePanel.querySelector(".msig-key-reuse-apply").click();
+    assert(/\/1$/.test(second.value), "Apply path did not append /1 to the reused co-signer key");
+    assert(rows[1].querySelector(".msig-key-reuse-note").textContent.includes("/1"), "The reuse note did not confirm the applied path");
+    assert(!reusePanel.querySelector(".msig-key-reuse-clear").hidden, "Remove path did not appear once a path was applied");
+    assert(second.value.includes(secondFingerprint), "The reused key origin changed when the path was applied");
+    reusePanel.querySelector(".msig-key-reuse-clear").click();
+    assert(!/\/1$/.test(second.value), "Remove path did not strip the appended derivation path");
 
     input(first, "");
     input(second, "");
-    reuse.click();
     document.querySelector('#workspace [data-workspace="calc"]').click();
     await until(() => !document.getElementById("key-manager").hidden, "key workspace after MS Station picker test");
   });

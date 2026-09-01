@@ -1539,27 +1539,40 @@ test("derived key results put private recovery before script type and addresses"
   assert.match(appSource, /hodlBindWalletResultActions\(\);/);
 });
 
-test("MS Station assigns keys from one session picker and makes reuse opt in", () => {
+test("every MS Station co-signer row can pick any session key, and key reuse offers a derivation path", () => {
   for (const markup of [template, appSource]) {
-    assert.match(markup, /class="station-key-source msig-station-key-source"[\s\S]*id="msig-session-keys"[\s\S]*id="msig-reuse-session-keys"/);
-    assert.match(markup, /Choose a compatible HD-root key from this session, or paste a co-signer extended public key below/);
-    assert.match(markup, /id="msig-reuse-session-keys" type="checkbox"/);
+    assert.doesNotMatch(markup, /msig-station-key-source/);
+    assert.doesNotMatch(markup, /id="msig-session-keys"/);
+    assert.doesNotMatch(markup, /id="msig-reuse-session-keys"/);
+    assert.doesNotMatch(markup, /id="msig-session-key-status"/);
   }
   assert.match(appSource, /function hodlSessionMsigKeys\(\) \{/);
   assert.match(appSource, /function hodlMatchingMsigExport\(result\) \{/);
   assert.match(appSource, /function hodlSyncMsigKeyAvatar\(row\) \{/);
-  assert.match(appSource, /function hodlPickMsigSessionKey\(state\) \{/);
-  assert.match(appSource, /function hodlMsigCanonicalSessionKey\(value\) \{/);
-  assert.match(appSource, /return hodlCanonicalMultisigKey\(hodlParseMultisigCosigner/);
-  assert.match(appSource, /function hodlMsigUsedSessionKeys\(\) \{/);
-  assert.match(appSource, /available = reuse \? options : options\.filter/);
-  assert.match(appSource, /hodlMsigKeyTarget = \[\.\.\.document\.querySelectorAll\("#msig-keys textarea"\)\]\.find/);
-  assert.doesNotMatch(appSource, /chips\.className = "msig-session-keys"/);
+  assert.match(appSource, /chips\.className = "msig-session-keys"/);
+  assert.match(appSource, /button\.className = "msig-session-key"/);
+  assert.match(appSource, /function hodlPickMsigSessionKey\(state, row\) \{/);
+  assert.match(appSource, /button\.onclick = \(\) => hodlPickMsigSessionKey\(state, row\)/);
   assert.match(appSource, /hodlFillKeyTabLifehash\(image, fingerprint\)/);
   assert.match(appSource, /hodlRefreshMsigSessionPickers\(\)/);
-  assert.match(appSource, /reuseSessionKeys: false/);
-  assert.match(appSource, /state\.fields\.reuseSessionKeys = Boolean/);
-  assert.match(css, /\.msig-key-reuse-toggle/);
+  // Reusing a key for another co-signer must come with a derivation path so
+  // every slot derives distinct public keys in the descriptor.
+  assert.match(appSource, /className = "msig-key-reuse"/);
+  assert.match(appSource, /function hodlSyncMsigKeyReuse\(row\) \{/);
+  assert.match(appSource, /function hodlMsigSuggestedDerivationPath\(parsed, row\) \{/);
+  assert.match(appSource, /function hodlStripMsigKeyPath\(value\) \{/);
+  assert.match(appSource, /function hodlMsigBaseKeyId\(parsed\) \{/);
+  assert.match(appSource, /Append a different derivation path so this co-signer derives a different public key in the descriptor\./);
+  assert.match(appSource, /parsed\.derivationPath = parsedOrigin\.derivationPath \|\| ""/);
+  assert.match(appSource, /must be unhardened \(like \/1\); hardened steps cannot be derived from an extended public key/);
+  assert.match(appSource, /function hodlMsigDerivedNode\(parsed\) \{/);
+  assert.match(appSource, /let node = hodlMsigDerivedNode\(parsed\);\s*return hodlHex\.encode\(node\.publicKey\)/);
+  assert.match(appSource, /\]\$\{canonical\}\$\{parsed\.derivationPath \? "\/" \+ parsed\.derivationPath : ""\}/);
+  assert.doesNotMatch(appSource, /hodlMsigKeyTarget|reuseSessionKeys/);
+  assert.match(css, /\.msig-session-keys \{/);
+  assert.match(css, /\.msig-session-key \{/);
+  assert.match(css, /\.msig-session-key\.active/);
+  assert.match(css, /\.msig-key-reuse \{/);
   assert.match(css, /\.msig-key-ident \{/);
 });
 
