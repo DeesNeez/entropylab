@@ -43,3 +43,181 @@ brew install coreutils gnu-sed
 export PATH="/opt/homebrew/bin:$PATH"
 
 echo "✅ System Bootstrap Complete."
+```
+
+### 2. Workspace & Asset Setup
+This creates the project folder in the **root level of your User folder** (e.g., `/Users/yourname/entropylab`).
+```zsh
+mkdir -p ~/entropylab/{boot,cache,ovl_root,app_assets}
+cd ~/entropylab
+
+echo "Assets folder ready. Please copy entropylab.html and assets into ~/entropylab/app_assets"
+```
+**Note:** Ensure your main file is named `entropylab.html` and placed in the `app_assets` folder before proceeding.
+
+### 3. Minimal Package Fetching
+**IMPORTANT:** You must open the **OrbStack** application from your Applications folder and ensure the engine is "Running" before executing this step.
+```zsh
+docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh -c "
+  apk update && \
+  apk fetch --recursive -o /work/cache \
+    alpine-base \
+    cage \
+    chromium \
+    font-dejavu \
+    mesa-dri-gallium \
+    wayland-protocols
+"
+```
+
+### 4. The Hardened Overlay (apkovl)
+
+**4.1 Network Driver Blacklist**
+```zsh
+mkdir -p ovl_root/etc/modprobe.d
+cat << 'EOF' > ovl_root/etc/modprobe.d/no-network.conf
+blacklist brcmfmac
+blacklist brcmutil
+blacklist cfg80211
+blacklist bluetooth
+blacklist btbcm
+blacklist hci_uart
+blacklist r8152
+blacklist smsc95xx
+blacklist lan7605
+blacklist e1000e
+EOF
+```
+
+**4.2 Privilege Separation (User Account)**
+We create a non-root user named `entropylab` to enable the Chromium Sandbox.
+```zsh
+mkdir -p ovl_root/home/entropylab
+
+# Add user to system files
+echo "entropylab:x:1000:1000:EntropyLab User:/home/entropylab:/bin/sh" >> ovl_root/etc/passwd
+echo "entropylab:x:1000:" >> ovl_root/etc/group
+echo "entropylab:!:19000:0:99999:7:::" >> ovl_root/etc/shadow
+
+# Fix Linux permissions on Mac filesystem using a container
+docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh -c "
+  chown -R 1000:1000 /work/ovl_root/home/entropylab
+"
+```
+
+**4.3 Assets & Service Config**
+```zsh
+mkdir -p ovl_root/var/www/entropylab
+cp -R app_assets/* ovl_root/var/www/entropylab/
+
+# Set app assets to be owned by the entropylab user
+docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh -c "
+  chown -R 1000:1000 /work/ovl_root/var/www/entropylab
+"
+
+mkdir -p ovl_root/etc/init.d ovl_root/etc/runlevels/default
+cat << 'EOF' > ovl_root/etc/init.d/entropylab
+#!/sbin/openrc-run
+name="EntropyLab Kiosk"
+depend() {
+    after localmount
+    keyword -jail
+}
+start() {
+    ebegin "Starting Hardened EntropyLab Kiosk"
+    
+    export XDG_RUNTIME_DIR=/tmp/runtime-root
+    mkdir -p $XDG_RUNTIME_DIR
+    chown -R entropylab:entropylab $XDG_RUNTIME_DIR
+    chmod 0700 $XDG_RUNTIME_DIR
+    
+    # Drop privileges to 'entropylab' user to activate Chromium Sandbox
+    su - entropylab -c "
+      export XDG_RUNTIME_DIR=/tmp/runtime-root
+      cage -d -- chromium-browser \
+        --incognito \
+        --no-first-run \
+        --disable-sync \
+        --disable-extensions \
+        --disable-component-update \
+        --disable-notifications \
+        --kiosk \
+        --user-data-dir=/tmp/chrome \
+        file:///var/www/entropylab/entropylab.html &
+    "
+    eend $?
+}
+EOF
+chmod +x ovl_root/etc/init.d/entropylab
+ln -s /etc/init.d/entropylab ovl_root/etc/runlevels/default/entropylab
+```
+
+**4.4 Finalize Overlay**
+```zsh
+mkdir -p ovl_root/etc
+echo "entropylab" > ovl_root/etc/hostname
+tar -czf boot/localhost.apkovl.tar.gz -C ovl_root .
+```
+
+### 5. Kernel & Firmware Lockdown
+
+**5.1 Kernel Download**
+```zsh
+curl -LO https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-rpi-3.20.0-aarch64.tar.gz
+tar -xzf alpine-rpi-3.20.0-aarch64.tar.gz -C boot/
+rm alpine-rpi-3.20.0-aarch64.tar.gz
+```
+
+**5.2 Firmware Radios Disable**
+```zsh
+cat << 'EOF' >> boot/usercfg.txt
+dtoverlay=disable-wifi
+dtoverlay=disable-bt
+gpu_mem=128
+EOF
+```
+
+**5.3 Kernel IP Stack Disable**
+```zsh
+gsed -i 's/$/ ip=off/' boot/cmdline.txt
+```
+
+### 6. Distribution
+
+**Option A: Flash Directly to SD/USB**
+```zsh
+diskutil list
+# Replace diskX with your actual ID (e.g., disk4)
+diskutil partitionDisk /dev/diskX MBR "MS-DOS FAT32" ENTROPYLAB 0b
+cp -R boot/* /Volumes/ENTROPYLAB/
+mkdir -p /Volumes/ENTROPYLAB/cache
+cp -R cache/* /Volumes/ENTROPYLAB/cache/
+sync
+diskutil eject /Volumes/ENTROPYLAB
+```
+
+**Option B: Generate Distributable .img File**
+```zsh
+docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh -c "
+  apk add dosfstools && \
+  dd if=/dev/zero of=entropylab_rpi.img bs=1M count=2048 && \
+  mkfs.vfat -F 32 entropylab_rpi.img && \
+  mkdir -p /mnt/tmp && \
+  mount -o loop entropylab_rpi.img /mnt/tmp && \
+  cp -r boot/* /mnt/tmp/ && \
+  mkdir -p /mnt/tmp/cache && \
+  cp -r cache/* /mnt/tmp/cache/ && \
+  umount /mnt/tmp
+"
+```
+*Note: If .img creation fails, ensure OrbStack is running with "Allow privileged containers" enabled in settings.*
+
+---
+
+## 🚩 Call for Security Audit
+I am inviting the community to review this build. Specifically:
+- Can the network stack be re-enabled from within the Chromium instance?
+- Is the privilege separation between `root` and `entropylab` user sufficient?
+- Are there any gaps in the kernel/firmware blacklist?
+
+Please open an **Issue** or submit a **Pull Request** with your findings.
