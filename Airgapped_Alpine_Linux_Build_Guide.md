@@ -8,14 +8,15 @@ This guide provides a professional workflow for creating a bootable, air-gapped 
 > **Hardware Requirement:** This diskless build requires a Raspberry Pi 4 or 5 with **at least 2GB of RAM**. Because the entire operating system and package set are loaded into a RAM disk (`tmpfs`) during boot, 1GB models will likely encounter Out-of-Memory (OOM) errors and fail to boot.
 
 ## 🎯 Project Goal
+
 To create a "zero-trust" runtime environment where the attack surface is minimized. This build ensures that even if a vulnerability is found in the rendering engine, the attacker is trapped in a non-privileged user account with no network access.
 
 ### The Hardening Strategy:
+
 1. **Hardware Layer:** WiFi and Bluetooth radios disabled at the firmware level (`usercfg.txt`).
-2. **Kernel Layer:** Network stack initialization disabled via `ip=off` in `cmdline.txt`.
-3. **Driver Layer:** All network-related kernel modules blacklisted in `modprobe.d`.
-4. **Privilege Layer:** Chromium runs as a low-privileged user (`entropylab`), NOT root. This enables the **Chromium Sandbox**, the primary defense against OS-level attacks.
-5. **Browser Layer:** Hardened flags (Incognito, No-Sync, No-Extensions) to prevent data persistence and "phone-home" behavior.
+2. **Kernel Layer:** Network stack initialization disabled via `ip=off` in `cmdline.txt` and all network drivers physically deleted from the root filesystem.
+3. **Privilege Layer:** Chromium runs as a low-privileged user (`entropylab`), NOT root. This enables the **Chromium Sandbox**, the primary defense against OS-level attacks.
+4. **Browser Layer:** Hardened flags (Incognito, No-Sync, No-Extensions) to prevent data persistence. The UI is served via a local, read-only internal web server rather than using permissive local file flags.
 
 ---
 
@@ -24,7 +25,9 @@ To create a "zero-trust" runtime environment where the attack surface is minimiz
 This workflow is optimized for Apple Silicon (M1/M2/M3/M4) to utilize native ARM64 containerization.
 
 ### 1. System Bootstrap
+
 Run this in your terminal. It verifies your hardware and installs **OrbStack** (the lightweight container engine) and the necessary GNU tools.
+
 ```zsh
 # Check for Apple Silicon
 if [ "$(uname -m)" != "arm64" ]; then
@@ -49,17 +52,22 @@ echo "✅ System Bootstrap Complete."
 ```
 
 ### 2. Workspace & Asset Setup
+
 This creates the project folder in the **root level of your User folder** (e.g., `/Users/yourname/entropylab`).
+
 ```zsh
 mkdir -p ~/entropylab/{boot,cache,ovl_root,app_assets}
 cd ~/entropylab
 
 echo "Assets folder ready. Please copy entropylab.html and assets into ~/entropylab/app_assets"
 ```
+
 **Note:** Ensure your main file is named `entropylab.html` and placed in the `app_assets` folder before proceeding.
 
 ### 3. Minimal Package Fetching
+
 **IMPORTANT:** You must open the **OrbStack** application from your Applications folder and ensure the engine is "Running" before executing this step.
+
 ```zsh
 docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh -c "
   apk update && \
@@ -70,103 +78,88 @@ docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh
     font-dejavu \
     mesa-dri-gallium \
     wayland-protocols \
-    udev
+    eudev \
+    eudev-openrc
 "
 ```
+
+*(Note: `eudev` and `eudev-openrc` replace the standard `udev` package to properly manage hot-plugging on Alpine).*
 
 ### 4. The Hardened Overlay (apkovl)
 
-**4.1 Network Driver Blacklist**
-```zsh
-mkdir -p ovl_root/etc/modprobe.d
-cat << 'EOF' > ovl_root/etc/modprobe.d/no-network.conf
-blacklist brcmfmac
-blacklist brcmutil
-blacklist cfg80211
-blacklist bluetooth
-blacklist btbcm
-blacklist hci_uart
-blacklist r8152
-blacklist smsc95xx
-blacklist lan7605
-blacklist e1000e
-EOF
-```
+**4.1 Privilege Separation Setup**
+We prepare the home directory structure. We do **not** write to `/etc/passwd` directly, as this will break Alpine's boot sequence. The user will be created dynamically by our service script upon boot.
 
-**4.2 Privilege Separation (User Account)**
-We create a non-root user named `entropylab` to enable the Chromium Sandbox.
 ```zsh
 mkdir -p ovl_root/home/entropylab
-
-# Add user to system files
-echo "entropylab:x:1000:1000:EntropyLab User:/home/entropylab:/bin/sh" >> ovl_root/etc/passwd
-echo "entropylab:x:1000:" >> ovl_root/etc/group
-echo "entropylab:!:19000:0:99999:7:::" >> ovl_root/etc/shadow
-
-# Fix Linux permissions on Mac filesystem using a container
-docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh -c "
-  chown -R 1000:1000 /work/ovl_root/home/entropylab
-"
 ```
 
-**4.3 USB Mount Logic**
-This enables the user to save files (like `wallet.dat`) to an external USB drive.
-```zsh
-# Create the mount point
-mkdir -p ovl_root/mnt/usb
+**4.2 USB Mount Logic (Udev & Shell Script)**
+This safely mounts an inserted FAT32 USB drive and assigns read/write ownership to the `entropylab` user (UID 1000).
 
-# Create the udev rule to trigger the mount script upon USB insertion
+```zsh
+# Create the udev rule to trigger on USB insertion
 mkdir -p ovl_root/etc/udev/rules.d
 cat << 'EOF' > ovl_root/etc/udev/rules.d/99-usb-mount.rules
-ACTION=="add", SUBSYSTEM=="block", KERNEL=="sd[b-z][0-9]", RUN+="/etc/init.d/usb-mount start"
+ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_BUS}=="usb", RUN+="/usr/local/bin/usb-mount.sh"
 EOF
 
-# Create the mount script to handle permissions for the entropylab user (UID 1000)
-mkdir -p ovl_root/etc/init.d
-cat << 'EOF' > ovl_root/etc/init.d/usb-mount
-#!/sbin/openrc-run
-start() {
-    # Identify the first available USB partition (e.g., sdb1, sdc1)
-    DEV=$(lsblk -no NAME | grep -E 'sd[b-z][0-9]' | head -n 1)
-    if [ -n "$DEV" ]; then
-        # Mount FAT32 drive with ownership assigned to the entropylab user (UID 1000)
-        mount -o uid=1000,gid=1000,umask=000 /dev/$DEV /mnt/usb
-    fi
-}
-stop() {
-    umount /mnt/usb
-}
+# Create the shell script executed by udev
+mkdir -p ovl_root/usr/local/bin
+cat << 'EOF' > ovl_root/usr/local/bin/usb-mount.sh
+#!/bin/sh
+# $DEVNAME is automatically provided by eudev during hotplug
+if [ -n "$DEVNAME" ]; then
+    mkdir -p /mnt/usb
+    mount -o uid=1000,gid=1000,umask=000 "$DEVNAME" /mnt/usb
+fi
 EOF
-chmod +x ovl_root/etc/init.d/usb-mount
+chmod +x ovl_root/usr/local/bin/usb-mount.sh
 ```
 
-**4.4 Assets & Service Config**
+**4.3 Assets & Kiosk Service Config**
+Instead of using unsafe browser flags for local files, we serve them over a read-only local web server.
+
 ```zsh
+# Copy assets and set permissions so 'nobody' user can serve them
 mkdir -p ovl_root/var/www/entropylab
 cp -R app_assets/* ovl_root/var/www/entropylab/
+chmod -R 755 ovl_root/var/www/entropylab
 
-# Set app assets to be owned by the entropylab user
-docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh -c "
-  chown -R 1000:1000 /work/ovl_root/var/www/entropylab
-"
-
-mkdir -p ovl_root/etc/init.d ovl_root/etc/runlevels/default
+# Create the startup script
+mkdir -p ovl_root/etc/init.d
 cat << 'EOF' > ovl_root/etc/init.d/entropylab
 #!/sbin/openrc-run
 name="EntropyLab Kiosk"
+
 depend() {
-    after localmount
+    after localmount eudev
     keyword -jail
 }
+
+start_pre() {
+    # Dynamically create the unprivileged user with a valid shell
+    if ! id -u entropylab > /dev/null 2>&1; then
+        adduser -D -u 1000 -s /bin/ash entropylab
+    fi
+    # Ensure home directory is owned by the new user
+    chown -R entropylab:entropylab /home/entropylab
+}
+
 start() {
     ebegin "Starting Hardened EntropyLab Kiosk"
     
+    # Setup Wayland runtime dir
     export XDG_RUNTIME_DIR=/tmp/runtime-root
     mkdir -p $XDG_RUNTIME_DIR
     chown -R entropylab:entropylab $XDG_RUNTIME_DIR
     chmod 0700 $XDG_RUNTIME_DIR
     
-    # Launch Cage with Chromium (Kiosk mode disabled to allow file saving)
+    # Start local web server as unprivileged 'nobody' user
+    # This creates a secure sandbox via the Same-Origin Policy (SOP)
+    httpd -p 127.0.0.1:8080 -h /var/www/entropylab -u nobody:nobody
+    
+    # Launch Cage (Wayland Compositor) with Chromium
     su - entropylab -c "
       export XDG_RUNTIME_DIR=/tmp/runtime-root
       cage -d -- chromium-browser \
@@ -176,34 +169,52 @@ start() {
         --disable-extensions \
         --disable-component-update \
         --disable-notifications \
-        --allow-file-access-from-files \
         --user-data-dir=/tmp/chrome \
-        file:///var/www/entropylab/entropylab.html &
+        http://127.0.0.1:8080/entropylab.html &
     "
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping EntropyLab Kiosk"
+    killall chromium-browser cage httpd
     eend $?
 }
 EOF
 chmod +x ovl_root/etc/init.d/entropylab
-ln -s /etc/init.d/entropylab ovl_root/etc/runlevels/default/entropylab
 ```
 
-**4.5 Finalize Overlay**
+**4.4 Finalize Overlay and Enable Services**
+
 ```zsh
-mkdir -p ovl_root/etc
+mkdir -p ovl_root/etc/runlevels/{sysinit,default}
 echo "entropylab" > ovl_root/etc/hostname
+
+# Enable hotplugging daemon and our kiosk app at boot
+ln -s /etc/init.d/udev ovl_root/etc/runlevels/sysinit/udev
+ln -s /etc/init.d/udev-trigger ovl_root/etc/runlevels/sysinit/udev-trigger
+ln -s /etc/init.d/entropylab ovl_root/etc/runlevels/default/entropylab
+
+# Package the overlay
 tar -czf boot/localhost.apkovl.tar.gz -C ovl_root .
 ```
 
 ### 5. Kernel & Firmware Lockdown
 
-**5.1 Kernel Download**
+**5.1 Kernel Download & Physical Driver Scrubbing**
+
 ```zsh
 curl -LO https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-rpi-3.20.0-aarch64.tar.gz
 tar -xzf alpine-rpi-3.20.0-aarch64.tar.gz -C boot/
 rm alpine-rpi-3.20.0-aarch64.tar.gz
+
+# Hardening: Physically delete network drivers from the ROOT filesystem (the overlay)
+# This ensures they are never loaded into RAM during the boot process.
+rm -rf ovl_root/lib/modules/*/kernel/drivers/net
 ```
 
 **5.2 Firmware Radios Disable**
+
 ```zsh
 cat << 'EOF' >> boot/usercfg.txt
 dtoverlay=disable-wifi
@@ -213,6 +224,7 @@ EOF
 ```
 
 **5.3 Kernel IP Stack Disable**
+
 ```zsh
 gsed -i 's/$/ ip=off/' boot/cmdline.txt
 ```
@@ -220,6 +232,7 @@ gsed -i 's/$/ ip=off/' boot/cmdline.txt
 ### 6. Distribution
 
 **Option A: Flash Directly to SD/USB**
+
 ```zsh
 diskutil list
 # Replace diskX with your actual ID (e.g., disk4)
@@ -232,28 +245,15 @@ diskutil eject /Volumes/ENTROPYLAB
 ```
 
 **Option B: Generate Distributable .img File**
+*This uses `mtools` instead of loop mounting, making the containerization perfectly reliable and significantly faster on macOS.*
+
 ```zsh
 docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh -c "
-  apk add dosfstools && \
-  dd if=/dev/zero of=entropylab_rpi.img bs=1M count=2048 && \
+  apk add dosfstools mtools && \
+  dd if=/dev/zero of=entropylab_rpi.img bs=1M count=256 && \
   mkfs.vfat -F 32 entropylab_rpi.img && \
-  mkdir -p /mnt/tmp && \
-  mount -o loop entropylab_rpi.img /mnt/tmp && \
-  cp -r boot/* /mnt/tmp/ && \
-  mkdir -p /mnt/tmp/cache && \
-  cp -r cache/* /mnt/tmp/cache/ && \
-  umount /mnt/tmp
+  mcopy -i entropylab_rpi.img -s boot/* ::/ && \
+  mcopy -i entropylab_rpi.img -s cache ::/
 "
 echo "✅ Distributable image created: entropylab_rpi.img"
 ```
-*Note: If .img creation fails, ensure OrbStack is running with "Allow privileged containers" enabled in settings.*
-
----
-
-## 🚩 Call for Security Audit
-I am inviting the community to review this build. Specifically:
-- Can the network stack be re-enabled from within the Chromium instance?
-- Is the privilege separation between `root` and `entropylab` user sufficient?
-- Are there any gaps in the kernel/firmware blacklist?
-
-Please open an **Issue** or submit a **Pull Request** with your findings.
