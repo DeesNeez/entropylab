@@ -9,11 +9,10 @@
 // showed the script hex). Networks are "mainnet" | "testnet".
 //
 // descriptorDerive is the rust-miniscript side of the crate: it parses an
-// output descriptor (BIP380-386 key expressions, xpubs and xprvs included,
-// plus the BIP390 musig() key expression the crate layers on top), derives
-// the child at `index`, and returns the address, the scriptPubKey hex, and
-// the derived keys (compressed hex) so callers can enforce key-distinctness
-// policies of their own.
+// output descriptor (BIP380-386 key expressions, xpubs and xprvs included),
+// derives the child at `index`, and returns the address, the scriptPubKey
+// hex, and the derived keys (compressed hex) so callers can enforce
+// key-distinctness policies of their own.
 import { wasmExports as wasm, withInput, withOutput } from "./entropylab-wasm.js";
 
 const textDecoder = new TextDecoder();
