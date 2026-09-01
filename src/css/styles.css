@@ -1003,6 +1003,22 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 .segmented-control > .tab:focus-visible {
   z-index: 2; outline: 2px solid color-mix(in oklab, var(--selection-accent) 72%, var(--fg)); outline-offset: 2px;
 }
+.key-mode-control {
+  width: max-content; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+  overscroll-behavior-inline: contain; scrollbar-width: none; -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+.key-mode-control::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.key-mode-control > .tab {
+  --key-method-card-bg: var(--bg);
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.key-mode-control > .tab:is(.active, [aria-pressed="true"]),
+.key-mode-control > .tab:not(:disabled):active { --key-method-card-bg: var(--selection-accent); }
+.key-method-icon {
+  display: none; flex: 0 0 18px; width: 18px; height: 18px; color: currentColor;
+}
+.key-method-icon svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .segmented-control.is-stacked { flex-direction: column; flex-wrap: nowrap; width: 100%; }
 .segmented-control.is-stacked > .tab { width: 100%; flex: 1 1 auto; }
 .segmented-control.is-stacked > .tab + .tab { margin-block-start: -1px; }
@@ -1647,6 +1663,13 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
      fitting more of it on screen matters more than the fuller wording. */
   .workspace-tab-full { display: none; }
   .workspace-tab-short { display: inline; }
+  /* The five Key Station methods fit as accessible icon buttons at phone
+     widths. Keep them in the same left-to-right order instead of allowing the
+     generic segmented-control fallback to turn them into a tall stack. */
+  .key-mode-control { width: 100%; }
+  .key-mode-control > .tab { flex: 1 0 44px; min-width: 44px; min-height: 44px; padding: 0 10px; }
+  .key-mode-control .key-method-icon { display: inline-flex; }
+  .key-mode-control .key-mode-label { display: none; }
   /* Icon-only: square them off against the 40px theme toggle. */
   .download-controls .btn:is(.download-html, .github-repo-link) { flex: 0 0 40px; width: 40px; padding: 0; justify-content: center; }
   /* The wordmark gives back the width the icon-only buttons still need. */
@@ -1691,11 +1714,14 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 .key-tab-lab-icon svg { width: 100%; height: 100%; }
 .multisig-tab-icon { display: inline-flex; flex: 0 0 auto; width: 28px; height: 23px; margin-left: -5px; }
 .multisig-tab-icon svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.bench-tab-icon,
+.key-tab-icon.key-tab-lab-icon.bench-tab-icon,
 .multisig-tab-icon.bench-tab-icon {
   flex: 0 0 18px; width: 18px; height: 18px; margin-left: 0; padding: 0; color: var(--muted);
 }
-.bench-tab-icon svg { display: block; width: 100%; height: 100%; }
+.bench-tab-icon svg { display: block; width: 100%; height: 100%; overflow: visible; }
+/* The MS ring does not shrink its Station mark: normalize the key cluster to
+   an 18px core. SP deliberately keeps its original compact 18px whole mark. */
+.multisig-tab-icon.bench-tab-icon { flex-basis: 21px; width: 21px; height: 24px; }
 .key-tab-label { display: inline-block; white-space: nowrap; }
 .key-tab-editing { height: 44px; }
 .key-tabs .key-tab-editing input.key-tab-name-input {
