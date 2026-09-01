@@ -1274,7 +1274,12 @@
     document.querySelector('#workspace [data-workspace="msig"]').click();
     const xpub = await until(() => document.querySelector("#msig-keys textarea"), "multisig input");
     input(xpub, payload + "tpub123");
-    assert(!/[<>="']/.test(xpub.value), "Dangerous characters remained in multisig input");
+    // The co-signer field keeps the multipath characters < > ; so a pasted
+    // descriptor step like /<0;1>/* reaches the parser unmangled; a textarea
+    // value is inert text, so the meaningful assertion is that no markup ran.
+    // (Every row carries a hidden lifehash <img>, so an img query is useless.)
+    assert(window.__browserTestInjected !== true, "Multisig input injected markup");
+    assert(!/[="]/.test(xpub.value), "Dangerous characters remained in multisig input");
     document.querySelector('#workspace [data-workspace="psbt"]').click();
     const psbt = await until(() => document.getElementById("psbt-text"), "PSBT input");
     input(psbt, payload);
@@ -2076,6 +2081,52 @@
     walletTabs().at(-1).click();
     await until(() => document.querySelector("#msig-out .account-result-card"), "wallet result after editing its inputs");
     assert(document.getElementById("msig-lab").hidden, "Selecting the wallet did not return to its result view");
+    document.querySelector('#workspace [data-workspace="calc"]').click();
+    await until(() => !document.getElementById("calc-card").hidden, "key workspace");
+  });
+
+  await test("multisig honors deep trailing paths and decodes the BIP type from key origins", async () => {
+    // Fixed public test vectors: seeds 0x01…01 and 0x07…07. Nothing secret.
+    const deepKey = "[932f8b09/48h/0h/0h/2h]xpub6ESghgmLD5FuqvXEbeiDS5WDT7nrbkcQHVGCcatqeMSqgeH7MjExsH6wnbgo5DU8bUUGGhQf9D8DwjHRBaGTq2VzbzHsQZMWPdcETmmbLAr/0/0/20";
+    const bip84Key = "[63969fb2/84h/0h/0h]xpub6CiYiNEkeCVkJJNmhDHaZrcDNY8bv4pnAepV4uBLPB7qFYsMDGP4QHLbRquL5LNPv3KyNXXdDE3XkAMc7xKRT8vGVF2bkWn8qZTi7LYF6s4";
+    document.querySelector('#workspace [data-workspace="msig"]').click();
+    await until(() => !document.getElementById("msig-card").hidden, "multisig workspace");
+    [...document.querySelectorAll("#msig-tabs button")].find((button) => button.id === "msig-tab-lab").click();
+    const wipe = document.getElementById("msig-wipe");
+    if (!wipe.disabled) wipe.click();
+    const script = document.getElementById("msig-script-type");
+    script.value = "p2wsh";
+    script.dispatchEvent(new Event("change", { bubbles: true }));
+    input(document.getElementById("msig-network"), "0");
+    input(document.getElementById("msig-n-number"), "1");
+    input(document.getElementById("msig-x-0"), deepKey);
+    const go = await until(() => !document.getElementById("msig-go").disabled && document.getElementById("msig-go"), "deep-path multisig derive button");
+    go.click();
+    await until(() => document.querySelector("#msig-out .account-result-card") || document.getElementById("msig-error").textContent, "deep-path multisig result");
+    assert(!document.getElementById("msig-error").textContent, `Deep-path multisig derivation failed: ${document.getElementById("msig-error").textContent}`);
+    const deepText = document.getElementById("msig-out").textContent;
+    // The trailing path is honored, with the multipath branches below it.
+    assert(deepText.includes("/0/0/20/<0;1>/*"), "Deep-path multipath descriptor did not land below the honored path");
+    assert(deepText.includes("/0/0/20/0/*"), "Receive branch descriptor lost the honored path");
+    assert(deepText.includes("bc1qtal46hvfmlmgelphpg0pe5j6s7yaxln4xhk8404pemgfmzjfccaqghcv8k"), "Deep-path receive address is wrong");
+    assert(!deepText.includes("bc1q8h2zxs3hf44y85mswmvh08hvzxkwyesayacxrmhwut538r4f85cqh40fwz"), "Deep-path derive ignored the honored path");
+    // A BIP84 account key as co-signer: the origin path decodes the BIP type.
+    document.getElementById("msig-edit-inputs").click();
+    await until(() => !document.getElementById("msig-lab").hidden && document.getElementById("msig-x-0")?.value, "lab restored for the BIP84 co-signer");
+    input(document.getElementById("msig-x-0"), "");
+    script.value = "p2sh";
+    script.dispatchEvent(new Event("change", { bubbles: true }));
+    equal(document.getElementById("msig-script-type").value, "p2sh", "script type moved without a co-signer key");
+    input(document.getElementById("msig-x-0"), bip84Key);
+    await until(() => document.getElementById("msig-script-type").value === "p2wsh", "script type decoded from the m/84h origin");
+    equal(document.getElementById("msig-purpose").value, "84", "BIP84 purpose was not decoded from the origin");
+    const go84 = await until(() => !document.getElementById("msig-go").disabled && document.getElementById("msig-go"), "BIP84 multisig derive button");
+    go84.click();
+    await until(() => document.querySelector("#msig-out .account-result-card") || document.getElementById("msig-error").textContent, "BIP84 multisig result");
+    assert(!document.getElementById("msig-error").textContent, `BIP84 co-signer derivation failed: ${document.getElementById("msig-error").textContent}`);
+    const bip84Text = document.getElementById("msig-out").textContent;
+    assert(bip84Text.includes("[63969fb2/84h/0h/0h]xpub6CiYiNEkeCVkJJNmhDHaZrcDNY8bv4pnAepV4uBLPB7qFYsMDGP4QHLbRquL5LNPv3KyNXXdDE3XkAMc7xKRT8vGVF2bkWn8qZTi7LYF6s4/<0;1>/*"), "BIP84 multipath descriptor is wrong");
+    assert(bip84Text.includes("bc1qfsyehfm2cq6e7wdyed74tkq06yl4dcy5n2fael2vl63jv3dj9v3sluw4wt"), "BIP84 co-signer receive address is wrong");
     document.querySelector('#workspace [data-workspace="calc"]').click();
     await until(() => !document.getElementById("calc-card").hidden, "key workspace");
   });
