@@ -206,7 +206,13 @@ test("multisig script type is inferred from SLIP-132 prefixes and key origins", 
   assert.equal(hodlMultisigOriginScriptKind({ path: "48h/0h/0h/2h" }), "p2wsh");
   assert.equal(hodlMultisigOriginScriptKind({ path: "86h/0h/0h" }), "p2tr");
   assert.equal(hodlMultisigOriginScriptKind({ path: "48h/0h/0h/3h" }), null);
-  assert.equal(hodlMultisigOriginScriptKind({ path: "84h/0h/0h" }), null);
+  // The singlesig BIPs map to their multisig script type at account depth;
+  // an unrecognized purpose selects nothing and stays custom.
+  assert.equal(hodlMultisigOriginScriptKind({ path: "84h/0h/0h" }), "p2wsh");
+  assert.equal(hodlMultisigOriginScriptKind({ path: "49h/0h/0h" }), "p2sh-p2wsh");
+  assert.equal(hodlMultisigOriginScriptKind({ path: "44h/0h/0h" }), "p2sh");
+  assert.equal(hodlMultisigOriginScriptKind({ path: "84h/0h/0h/2h" }), null);
+  assert.equal(hodlMultisigOriginScriptKind({ path: "69420h/0h/0h" }), null);
   assert.equal(hodlMultisigPurposeIndex({ path: "45h" }), 45);
   assert.equal(hodlMultisigPurposeIndex({ path: "69420h/0h/0h/2h" }), 69420);
   assert.equal(hodlMultisigPurposeIndex({ path: "48/0h/0h/2h" }), 48);

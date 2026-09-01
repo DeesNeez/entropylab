@@ -147,15 +147,17 @@ function makeConfig(fixed = {}) {
   const purpose =
     fixed.purpose ??
     (kind === "p2sh"
-      ? nextPick([45, 45, 87])
+      ? nextPick([45, 45, 87, 44])
       : kind === "p2tr"
         ? nextPick([86, 87, 87, 69420])
-        : nextPick([48, 48, 87]));
+        : kind === "p2sh-p2wsh"
+          ? nextPick([48, 48, 87, 49])
+          : nextPick([48, 48, 87, 84]));
   const account = nextInt(3);
   const bip45 = kind === "p2sh" && purpose === 45;
   const originPath = bip45
     ? "45h"
-    : purpose === 87 || kind === "p2tr"
+    : purpose === 87 || purpose === 44 || purpose === 49 || purpose === 84 || kind === "p2tr"
       ? `${purpose}h/${coin}h/${account}h`
       : `${purpose}h/${coin}h/${account}h/${kind === "p2sh-p2wsh" ? 1 : 2}h`;
   const n = fixed.n ?? 1 + nextInt(4);
@@ -220,8 +222,7 @@ function runPipeline(config, cosigners, suffixFor = () => "") {
   });
   const branches = [];
   for (let branch = config.branchStart; branch < config.branchStart + config.branchRange; branch++) {
-    const suffix = config.bip45 ? `/0/${branch}/*` : `/${branch}/*`;
-    const inner = tokens.map((t) => t.token + suffix).join(",");
+    const inner = tokens.map((t) => t.token + (config.bip45 ? "/0" : "") + `/${branch}/*`).join(",");
     const descriptor = hodlMsigInnerDescriptor(config.kind, config.m, inner, config.sorted);
     const rows = [];
     for (let index = config.addressStart; index < config.addressStart + config.addressCount; index++) {
@@ -329,6 +330,24 @@ const GUARD_TOKENS = [
   }
   assertEqual(hodlParseKeyOrigin(hodlFilterXpub(GUARD_TOKENS[0] + "/0/1/0")).derivationPath, "0/1/0", "guard honored path");
   assertEqual(hodlParseKeyOrigin(hodlFilterXpub(GUARD_TOKENS[0] + "/<0;1>/*")).derivationPath, "", "guard decoration is not honored");
+  // Honored trailing path: a numeric path is kept in the token, branches and
+  // indexes derive below it, and the multipath export lands below it —
+  // xpub/0/0/20 exports as xpub/0/0/20/<0;1>/*. Expected addresses were
+  // computed once with the independent scure leg.
+  const pathedTokens = GUARD_TOKENS.map((t) => {
+    const parsed = hodlParseKeyOrigin(hodlFilterXpub(`${t}/0/0/20`));
+    assertEqual(parsed.derivationPath, "0/0/20", "guard honored path parse");
+    return `[${parsed.origin.fingerprint}/${parsed.origin.path}]${parsed.key}/${parsed.derivationPath}`;
+  });
+  const pathedInner = (branch) => pathedTokens.map((t) => `${t}/${branch}/*`).join(",");
+  const pathedReceive = hodlMsigInnerDescriptor("p2wsh", 2, pathedInner(0), true);
+  assertEqual(descriptorDerive(hodlDescriptorWithChecksum(pathedReceive), 0, "testnet").address, "tb1q9eflm9vaktmn9pcpy03d8seyfeg3zm08gatdej2dsa42tfmx38aq3pfgx2", "guard honored-path wsh index 0");
+  assertEqual(descriptorDerive(hodlDescriptorWithChecksum(pathedReceive), 1, "testnet").address, "tb1qeupxdgtpsyztzl9zgqw9zchst8zcqyn8ls2qd9ca9d90v9m838esv6fqts", "guard honored-path wsh index 1");
+  const pathedChange = hodlMsigInnerDescriptor("p2wsh", 2, pathedInner(1), true);
+  assertEqual(descriptorDerive(hodlDescriptorWithChecksum(pathedChange), 3, "testnet").address, "tb1qnet9hhcwgk9mq8l4fj4h9arrppkq6kvj34cymrwtnnx0tml9zwsq6kkn5u", "guard honored-path wsh branch 1 index 3");
+  const pathedMultipath = hodlWatchOnlyMultipathDescriptor(hodlDescriptorWithChecksum(pathedReceive), [0, 1]);
+  checks += 1;
+  if ((pathedMultipath.match(/\/0\/0\/20\/<0;1>\/\*/g) || []).length !== 3) fail(`honored-path multipath did not land below 0/0/20: ${pathedMultipath}`);
 }
 
 // A few forced extremes beyond the PRNG distribution: 1-of-1, 15-of-15, a

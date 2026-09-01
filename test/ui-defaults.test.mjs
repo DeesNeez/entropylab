@@ -683,7 +683,7 @@ test("key derivation shows the relevant paste-ready multisig co-signer exports",
   // and the address-match look-ahead reuses the same engine through
   // hodlMsigAddr's raw-key descriptor.
   assert.match(app, /descriptorDerive\(descriptor,index,network\)/);
-  assert.match(app, /hodlMsigAddr\(keys,re\.m,re\.network,re\.script,re\.sorted!==!1\)/);
+  assert.match(app, /hodlMsigAddr\(keys,hodlWalletResult\.m,hodlWalletResult\.network,hodlWalletResult\.script,hodlWalletResult\.sorted!==!1\)/);
   assert.match(app, /function hodlTaprootNumsKey\(\)/);
   assert.match(app, /function hodlXOnlyPubkey\(pubkey\)/);
 });
