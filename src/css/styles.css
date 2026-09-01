@@ -130,6 +130,20 @@ button:not(:disabled):active * { color: inherit !important; }
    small inline identicon next to the hash it visualizes. */
 .page-footer-build code { font-family: var(--mono); }
 .page-footer-lifehash { vertical-align: -0.25em; margin-left: 4px; border-radius: 3px; }
+/* A fourth row closes the footer: the repository link and the theme toggle,
+   which used to crowd the header bar. Off the bar they are no longer squeezed
+   to 40px, so both take the app's standard 44px target and the link keeps its
+   label at every width. */
+.page-footer-links { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px; margin-top: 14px; }
+.page-footer-links > a { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.page-footer-links .github-repo-link {
+  border-color: color-mix(in oklab, var(--blue) 65%, var(--border));
+  background: color-mix(in oklab, var(--blue) 14%, var(--surface)); color: var(--blue);
+}
+.page-footer-links .github-repo-link:hover {
+  background: color-mix(in oklab, var(--blue) 23%, var(--surface)); color: var(--fg);
+}
+.page-footer-links .github-repo-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; }
 .tab, .btn {
   min-height: 44px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border);
@@ -656,16 +670,6 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
    stops short of both ends: the wordmark wants the full contrast. */
 .site-title { flex: 0 0 auto; font-family: var(--display); font-size: 22px; font-weight: 600; letter-spacing: -0.02em; color: #ffffff; white-space: nowrap; }
 :root[data-theme="light"] .site-title { color: #000000; }
-/* The build stamps this version beside the logo. It takes the
-   kicker's accent and weight, but not its display tracking: this sits in a
-   dense row of controls rather than above a title. */
-.site-version {
-  flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; margin-left: 6px; white-space: nowrap;
-  font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); font-weight: 600;
-}
-/* Version strings opt out of the uppercase, so the "v" prefix stays lowercase
-   wherever one appears in the label. */
-.site-version-number { text-transform: none; font-variant-numeric: tabular-nums; }
 /* Straddles the header's bottom rule so the rule runs into its two edges and
    the tag reads as speared by it, and sits at the bar's left edge, under the
    logo and wordmark. Hanging below the control row is what lets it hold that
@@ -706,7 +710,10 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
 }
 .network-picker-button:hover { border-color: var(--accent); }
 .network-picker-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.network-picker-glyph { display: block; flex: 0 0 auto; }
+/* Sized with the download and GitHub marks either side of it, which are
+   both 18px; the SVG's own 16px attribute leaves the coin reading small
+   against them, label or no label. */
+.network-picker-glyph { display: block; flex: 0 0 auto; width: 18px; height: 18px; }
 .network-picker-coin { fill: var(--bitcoin); }
 .network-picker[data-network="testnet"] .network-picker-coin { fill: var(--testnet); }
 .network-picker[data-network="signet"] .network-picker-coin { fill: var(--signet); }
@@ -759,10 +766,7 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
    glyphs land a pixel low next to a symmetric icon. This nudge is optical, not
    layout: it moves the ink, not the box. */
 .control-label { position: relative; top: -1px; }
-.download-controls .btn:is(.download-html, .github-repo-link) { flex: 0 0 auto; }
-/* Square it off against the 40px header controls; the shared keyboard-toggle
-   base is 44px wide and stays that way everywhere else in the app. */
-.download-controls .theme-toggle { flex: 0 0 40px; width: 40px; align-self: center; }
+.download-controls .download-html { flex: 0 0 auto; }
 .theme-toggle svg { display: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .theme-toggle[data-theme-mode="dark"] .theme-icon-dark, .theme-toggle[data-theme-mode="light"] .theme-icon-light { display: block; }
 .btn:is(.download-html, .save-recovery-sheet, .save-wallet-dat) {
@@ -774,14 +778,6 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
 }
 .btn:is(.download-html, .save-recovery-sheet, .save-wallet-dat):focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 .github-mark { flex: 0 0 auto; }
-.download-controls .github-repo-link {
-  border-color: color-mix(in oklab, var(--blue) 65%, var(--border));
-  background: color-mix(in oklab, var(--blue) 14%, var(--surface)); color: var(--blue);
-}
-.download-controls .github-repo-link:hover {
-  background: color-mix(in oklab, var(--blue) 23%, var(--surface)); color: var(--fg);
-}
-.download-controls .github-repo-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .custom-select-native {
   position: absolute !important; width: 1px !important; height: 1px !important; min-height: 0 !important;
   margin: 0 !important; padding: 0 !important; opacity: 0; pointer-events: none; overflow: hidden;
@@ -1733,19 +1729,13 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 @media (max-width: 719px) {
   :root { --site-header-pad: 12px; }
   .control-label { display: none; }
-  /* Out of the flex row, which is full: a chip hung off the bar's
-     bottom-right corner, below the theme toggle it follows in the row — the
-     connectivity tag's treatment at the opposite corner. At 24px tall it
-     straddles three quarters down, which is what clears both the 40px
-     controls above the rule and the content 20px below it; the coin's
-     colour still carries the network. */
-  .network-picker {
-    position: absolute; right: var(--site-header-pad); bottom: 0; transform: translateY(75%);
-    z-index: 1;
-  }
+  /* Icon-only in the row, square against the 40px theme toggle it sits
+     beside: the picker keeps its place among the header controls rather than
+     dropping out of the bar, and the coin's colour still carries the network.
+     .network-picker stays position: relative so the menu anchors to it. */
+  .network-picker { flex: 0 0 40px; }
   .network-picker-label, .network-picker-chevron { display: none; }
-  .network-picker-button { min-height: 0; padding: 4px 8px; }
-  .network-picker-button .network-picker-glyph { width: 14px; height: 14px; }
+  .network-picker-button { width: 40px; padding: 0; justify-content: center; }
   /* Short tool names here: the strip is the page's only horizontal scroll, so
      fitting more of it on screen matters more than the fuller wording. */
   .workspace-tab-full { display: none; }
@@ -1758,20 +1748,22 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
   .key-mode-control .key-method-icon { display: inline-flex; }
   .key-mode-control .key-mode-label { display: none; }
   /* Icon-only: square them off against the 40px theme toggle. */
-  .download-controls .btn:is(.download-html, .github-repo-link) { flex: 0 0 40px; width: 40px; padding: 0; justify-content: center; }
+  .download-controls .download-html { flex: 0 0 40px; width: 40px; padding: 0; justify-content: center; }
+  /* The footer link loses its label with the rest, so it squares off against
+     the 44px toggle beside it rather than keeping a button's side padding. */
+  .page-footer-links .github-repo-link { flex: 0 0 44px; width: 44px; padding: 0; justify-content: center; }
   /* The wordmark gives back the width the icon-only buttons still need. */
   .site-title { font-size: 19px; }
   .download-controls { gap: 6px; }
-  /* Only the version number itself survives on narrow screens. */
-  .site-version-tag { display: none; }
 }
 /* Below the common 412/414px Android widths the lockup is the last thing with
    give left in the bar, the controls being fixed-width icons by now. Taking it
    down a step buys back roughly the width the row is short of at 320px, and
-   costs less than dropping an item. */
+   costs less than dropping an item. The controls close up by 2px here too, the
+   network picker having taken a fourth slot in the row. */
 @media (max-width: 400px) {
   .site-title { font-size: 17px; }
-  .site-version { font-size: 11px; margin-left: 2px; }
+  .download-controls { gap: 4px; }
 }
 @media (max-width: 520px) {
   .key-panel-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; }

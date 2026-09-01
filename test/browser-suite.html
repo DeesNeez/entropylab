@@ -60,10 +60,13 @@
         .map((entry) => entry.name)
         .filter((url) => /^(https?|wss?):/i.test(url));
       assert(external.length === 0, "Offline mode loaded a network resource: " + external.join(", "));
-      const label = document.querySelector(".site-version");
-      assert(label, "Header version label is missing");
-      equal(label.textContent.replace(/\s+/g, " ").trim(), currentVersion + " (Latest)");
-      assert(!label.querySelector("a"), "Offline version label offered a link");
+      const build = document.querySelector(".page-footer-build");
+      assert(build, "Footer build stamp is missing");
+      assert(
+        build.textContent.includes(currentVersion),
+        "Footer build stamp does not carry this build's version",
+      );
+      assert(!build.querySelector("a"), "Offline build stamp offered a link");
     });
     await test("offline host passes the startup sanity-check barrage", () => {
       const root = document.documentElement;
@@ -194,9 +197,9 @@
     assert(external.length === 0, "External network activity: " + external.join(", "));
     const manifestRequests = observed.filter((url) => /versions\.json$/.test(new URL(url, location.href).pathname));
     assert(manifestRequests.length === 0, "A version manifest was fetched: " + manifestRequests.join(", "));
-    const label = document.querySelector(".site-version");
-    equal(label.textContent.replace(/\s+/g, " ").trim(), currentVersion + " (Latest)");
-    assert(!label.querySelector("a"), "The static version label links nowhere");
+    const build = document.querySelector(".page-footer-build");
+    assert(build.textContent.includes(currentVersion), "The footer build stamp names this build");
+    assert(!build.querySelector("a"), "The static build stamp links nowhere");
     // The logo and the favicon travel inside the document, so neither is fetched.
     const imageRequests = observed.filter((url) => /\/assets\/(entropylab_(dark|light)|logo-(dark|light)|favicon)\.png$/.test(new URL(url, location.href).pathname));
     assert(imageRequests.length === 0, "Hosted mode fetched an inlined image: " + imageRequests.join(", "));
@@ -726,10 +729,13 @@
 
   await test("theme toggle flips between dark and light and opens the way the system asks", async () => {
     const toggle = document.getElementById("theme-toggle");
-    const controls = document.querySelector(".download-controls");
+    const links = document.querySelector(".page-footer-links");
     const background = () => getComputedStyle(document.body).backgroundColor;
-    assert(toggle && controls.contains(toggle), "Theme toggle is missing from the download controls");
-    assert(Math.abs(toggle.getBoundingClientRect().right - controls.getBoundingClientRect().right) < 1, "Theme toggle is not at the right edge of its row");
+    assert(toggle && links && links.contains(toggle), "Theme toggle is missing from the footer control row");
+    assert(links.lastElementChild === toggle, "Theme toggle is not the last control in the footer row");
+    // It closes the page now; the header bar keeps only Download and the picker.
+    assert(!document.querySelector(".download-controls").contains(toggle), "Theme toggle is still in the header bar");
+    assert(links.querySelector(".github-repo-link"), "The repository link did not move to the footer with it");
     // Two icons, because there are two states to show.
     assert(toggle.querySelectorAll("svg").length === 2, "Theme toggle should carry exactly two icons");
     assert(!toggle.querySelector(".theme-icon-system"), "Theme toggle still carries the retired system icon");
@@ -1003,7 +1009,7 @@
       // The choice is remembered for this build, so a reload does not bring
       // the banner back until the next release.
       assert(
-        localStorage.getItem("entropylab-beta-banner-dismissed") === document.querySelector(".site-version-number").textContent.replace(/^v/, ""),
+        localStorage.getItem("entropylab-beta-banner-dismissed") === currentVersion.replace(/^v/, ""),
         "Dismissal was not persisted against this build's version",
       );
       // A visit after a dismissal never paints the banner: the inline head
