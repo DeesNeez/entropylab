@@ -1805,7 +1805,7 @@
       "Native SegWit BIP48 co-signer export",
     );
     const bip48Export = bip48Row.querySelector(".mono")?.textContent.trim();
-    assert(/^\[[0-9a-f]{8}\/48h\/1h\/0h\/2h\]Vpub/.test(bip48Export || ""), "BIP48 testnet origin or account key is wrong");
+    assert(/^\[[0-9a-f]{8}\/48h\/1h\/0h\/2h\]tpub/.test(bip48Export || ""), "BIP48 testnet origin or account key is wrong");
 
     document.querySelector('#workspace [data-workspace="msig"]').click();
     await until(() => !document.getElementById("msig-card").hidden, "multisig workspace");

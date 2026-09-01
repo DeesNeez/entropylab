@@ -985,10 +985,6 @@ function hodlAccountExportFamily(definition, options = {}) {
 function hodlSerializeExtendedKey(value, network, family, isPrivate) {
   return value ? hodlReversionExtendedKey(value, hodlExtendedKeyVersions[network][family][isPrivate ? "prv" : "pub"]) : null;
 }
-function hodlSerializeMultisigExtendedKey(value, network, family) {
-  let version = hodlMultisigKeyVersions.find((entry) => entry.network === network && entry.family === family && !entry.private);
-  return value && version ? hodlReversionExtendedKey(value, version.ver) : null;
-}
 function hodlBuildMultisigCosignerExports(root, network, accountIndex, masterFingerprint, coinType = hodlCoinTypeFromNetwork(network)) {
   return [{
       accountId: "bip44",
@@ -1012,14 +1008,14 @@ function hodlBuildMultisigCosignerExports(root, network, accountIndex, masterFin
       accountId: "bip49",
       kind: "p2sh-p2wsh",
       label: "Nested SegWit \xB7 BIP48",
-      family: "y",
+      family: "x",
       scriptIndex: 1
     },
     {
       accountId: "bip84",
       kind: "p2wsh",
       label: "Native SegWit \xB7 BIP48",
-      family: "z",
+      family: "x",
       scriptIndex: 2
     },
     {
@@ -1034,8 +1030,8 @@ function hodlBuildMultisigCosignerExports(root, network, accountIndex, masterFin
     let accountPath = definition.accountPath || `m/48'/${coinType}'/${accountIndex}'/${definition.scriptIndex}'`,
       originPath = definition.originPath || `48h/${coinType}h/${accountIndex}h/${definition.scriptIndex}h`;
     let node = root.derive(accountPath),
-      publicKey = definition.family === "x" ? hodlSerializeExtendedKey(node.publicExtendedKey, network, "x", !1) : hodlSerializeMultisigExtendedKey(node.publicExtendedKey, network, definition.family);
-    let prefix = definition.family === "x" ? hodlExtendedKeyVersions[network].x.pubName : hodlMultisigKeyVersions.find(entry => entry.network === network && entry.family === definition.family && !entry.private)?.name || "extended public key";
+      publicKey = hodlSerializeExtendedKey(node.publicExtendedKey, network, "x", !1);
+    let prefix = hodlExtendedKeyVersions[network].x.pubName;
     return {
       ...definition,
       accountPath,
@@ -6568,8 +6564,8 @@ function hodlMultisigKeyPlaceholder(kind, network, purpose, coinType = hodlCoinT
     coin = `${coinType}${hardening.coinType ? "h" : ""}`, purposeStep = `${purpose}${hardening.purpose ? "h" : ""}`, account = `0${hardening.account ? "h" : ""}`;
   if (kind === "p2sh" && purpose === 45) return `[fingerprint/${purposeStep}]${testnet?"tpub":"xpub"}\u2026`;
   if (kind === "p2sh" || purpose === 87) return `[fingerprint/${purposeStep}/${coin}/${account}]${testnet?"tpub":"xpub"}\u2026`;
-  if (kind === "p2sh-p2wsh") return `[fingerprint/${purposeStep}/${coin}/${account}/1h]${testnet?"Upub":"Ypub"}\u2026`;
-  if (kind === "p2wsh") return `[fingerprint/${purposeStep}/${coin}/${account}/2h]${testnet?"Vpub":"Zpub"}\u2026`;
+  if (kind === "p2sh-p2wsh") return `[fingerprint/${purposeStep}/${coin}/${account}/1h]${testnet?"tpub":"xpub"}\u2026`;
+  if (kind === "p2wsh") return `[fingerprint/${purposeStep}/${coin}/${account}/2h]${testnet?"tpub":"xpub"}\u2026`;
   if (kind === "p2tr") return `[fingerprint/${purposeStep}/${coin}/${account}]${testnet?"tpub":"xpub"}\u2026`;
   return "Use matching multisig extended public keys"
 }

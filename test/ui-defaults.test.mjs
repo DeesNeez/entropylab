@@ -539,12 +539,12 @@ test("multisig script type and placeholders follow detected co-signer exports", 
     assert.match(markup, /id="msig-script-warning" role="status" hidden/);
     assert.match(markup, /id="msig-go"[^>]*aria-describedby="msig-script-warning"/);
   }
-  assert.match(template, /placeholder="\[fingerprint\/48h\/0h\/0h\/2h\]Zpub…"/);
+  assert.match(template, /placeholder="\[fingerprint\/48h\/0h\/0h\/2h\]xpub…"/);
   assert.match(app, /function hodlMultisigKeyPlaceholder\(kind,network,purpose,coinType=hodlCoinTypeFromNetwork\(network\),hardening=/);
   assert.match(appWhitespace, /kind==="p2sh"&&purpose===45\)return`\[fingerprint\/\$\{purposeStep\}\]\$\{testnet\?"tpub":"xpub"\}(?:…|\\u2026)`/);
   assert.match(appWhitespace, /kind==="p2sh"\|\|purpose===87\)return`\[fingerprint\/\$\{purposeStep\}\/\$\{coin\}\/\$\{account\}\]\$\{testnet\?"tpub":"xpub"\}(?:…|\\u2026)`/);
-  assert.match(app, /testnet\?"Upub":"Ypub"/);
-  assert.match(app, /testnet\?"Vpub":"Zpub"/);
+  assert.match(appWhitespace, /kind==="p2sh-p2wsh"\)return`\[fingerprint\/\$\{purposeStep\}\/\$\{coin\}\/\$\{account\}\/1h\]\$\{testnet\?"tpub":"xpub"\}(?:…|\\u2026)`/);
+  assert.match(appWhitespace, /kind==="p2wsh"\)return`\[fingerprint\/\$\{purposeStep\}\/\$\{coin\}\/\$\{account\}\/2h\]\$\{testnet\?"tpub":"xpub"\}(?:…|\\u2026)`/);
   assert.match(appWhitespace, /kind==="p2tr"\)return`\[fingerprint\/\$\{purposeStep\}\/\$\{coin\}\/\$\{account\}\]\$\{testnet\?"tpub":"xpub"\}(?:…|\\u2026)`/);
   assert.match(app, /function hodlMultisigPurposeIndex\(origin\)/);
   assert.match(app, /function hodlUpdateMsigPurposeDetection\(\)/);
@@ -559,8 +559,8 @@ test("key derivation shows the relevant paste-ready multisig co-signer exports",
   assert.match(app, /function hodlBuildMultisigCosignerExports\(root,network,accountIndex,masterFingerprint,coinType=hodlCoinTypeFromNetwork\(network\)\)/);
   assert.match(appWhitespace, /accountId:"bip44",kind:"p2sh",standard:"bip45",label:"Legacy (?:·|\\xB7) BIP45 (?:·|\\xB7) No account",family:"x",accountPath:"m\/45'",originPath:"45h"/);
   assert.match(appWhitespace, /accountId:"bip44",kind:"p2sh",standard:"bip87",label:`Legacy (?:·|\\xB7) BIP87 (?:·|\\xB7) Account \$\{accountIndex\}`,family:"x",accountPath:`m\/87'\/\$\{coinType\}'\/\$\{accountIndex\}'`,originPath:`87h\/\$\{coinType\}h\/\$\{accountIndex\}h`/);
-  assert.match(appWhitespace, /accountId:"bip49",kind:"p2sh-p2wsh",label:"Nested SegWit (?:·|\\xB7) BIP48",family:"y",scriptIndex:1/);
-  assert.match(appWhitespace, /accountId:"bip84",kind:"p2wsh",label:"Native SegWit (?:·|\\xB7) BIP48",family:"z",scriptIndex:2/);
+  assert.match(appWhitespace, /accountId:"bip49",kind:"p2sh-p2wsh",label:"Nested SegWit (?:·|\\xB7) BIP48",family:"x",scriptIndex:1/);
+  assert.match(appWhitespace, /accountId:"bip84",kind:"p2wsh",label:"Native SegWit (?:·|\\xB7) BIP48",family:"x",scriptIndex:2/);
   assert.match(appWhitespace, /accountId:"bip86",kind:"p2tr",label:"Taproot (?:·|\\xB7) BIP86",family:"x"/);
   assert.match(app, /accountPath=definition\.accountPath\|\|`m\/48'\/\$\{coinType\}'\/\$\{accountIndex\}'\/\$\{definition\.scriptIndex\}'`/);
   assert.match(app, /value:`\[\$\{masterFingerprint\}\/\$\{originPath\}\]\$\{publicKey\}`/);
