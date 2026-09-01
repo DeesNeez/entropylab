@@ -2,14 +2,14 @@
 
 **Hardened RAM-Only OS for Raspberry Pi 4/5**
 
-This guide provides a professional workflow for creating a bootable, air-gapped image that loads the `entropylab.html` application. This build is optimized for creation on an M-Series Apple Mac.
+This guide provides a professional workflow for creating a bootable, air-gapped image that only loads the `entropylab.html` application. This build is optimized for creation on an M-Series Apple Mac.
 
 > [!CAUTION]
 > **Hardware Requirement:** This diskless build requires a Raspberry Pi 4 or 5 with **at least 2GB of RAM**. Because the entire operating system and package set are loaded into a RAM disk (`tmpfs`) during boot, 1GB models will likely encounter Out-of-Memory (OOM) errors and fail to boot.
 
 ## 🎯 Project Goal
 
-To create a "zero-trust" RAM-only runtime environment where the attack surface is minimized. This build ensures that even if a vulnerability is found in the rendering engine, the attacker is trapped in a non-privileged user account with no network access.
+To create a "zero-trust" RAM-only runtime environment where the attack surface is minimized.
 
 ### The Hardening Strategy:
 
@@ -26,7 +26,7 @@ This workflow is optimized for Apple Silicon (M1/M2/M3/M4) to utilize native ARM
 
 ### 1. System Bootstrap
 
-Run this in your terminal. It verifies your hardware and installs **OrbStack** (the lightweight container engine) and the necessary GNU tools.
+This verifies your hardware and installs **OrbStack** (the lightweight container engine) and the necessary GNU tools.
 
 ```zsh
 # Check for Apple Silicon
@@ -83,8 +83,6 @@ docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh
     eudev-openrc
 "
 ```
-
-*(Note: `eudev` and `eudev-openrc` replace the standard `udev` package to properly manage hot-plugging on Alpine).*
 
 ### 4. The Hardened Overlay (apkovl)
 
