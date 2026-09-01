@@ -63,7 +63,70 @@ test("wallet coin type indexes enable and default to mainnet", () => {
   assert.match(appSource, /function hodlReadCoinType\(input = document\.getElementById\("network"\), mark = true\)/);
   assert.match(appSource, /function hodlNetworkFromCoinType\(coinType\)/);
   assert.match(appSource, /Number\(coinType\) === 1 \? "testnet" : "mainnet"/);
-  assert.match(app, /coinType:"0'",coinTypeHardened?:!0,network:"mainnet"|coinType:"0'",coinTypeHarden:!0,network:"mainnet"/);
+  // New keys, the lab reset, and new multisigs default to the header picker's
+  // network, which always boots mainnet.
+  assert.match(app, /var hodlNetworkDefault="mainnet"/);
+  assert.match(app, /coinType:`\$\{hodlDefaultCoinType\(\)\}'`,coinTypeHarden:!0,network:hodlNetworkDefault/);
+  assert.match(app, /coinType:String\(hodlDefaultCoinType\(\)\),coinTypeHarden:!0,network:hodlNetworkDefault/);
+});
+
+test("the header network picker sets the network every tool defaults to", () => {
+  for (const markup of [template, appWhitespace]) {
+    // The control rides the fixed header, after the version and before the
+    // connectivity tag, and ships in the mainnet state.
+    const header = markup.indexOf('<div class="site-header no-print">');
+    const wrapper = markup.indexOf('<div class="wrap">');
+    const picker = markup.indexOf('id="network-picker"');
+    assert.ok(header >= 0 && header < picker && picker < wrapper, "the network picker must sit inside the header");
+    assert.ok(
+      markup.indexOf('class="site-version"') < picker && picker < markup.indexOf('id="network-status"'),
+      "the picker belongs between the version and the connectivity tag",
+    );
+    assert.match(markup, /id="network-picker" data-network="mainnet"/);
+    assert.match(markup, /id="network-picker-button"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"[^>]*aria-controls="network-picker-menu"/);
+    assert.match(markup, /aria-label="Bitcoin network: Mainnet\. Change the network the tools derive and check for"/);
+    // The Bitcoin Core icon's coin — orange disc, white B — beside the name.
+    assert.match(markup, /<circle class="network-picker-coin" cx="12" cy="12" r="12"\/>/);
+    assert.match(markup, /<path class="network-picker-b" fill-rule="evenodd"/);
+    assert.match(markup, /id="network-picker-label">Mainnet</);
+    assert.match(markup, /id="network-picker-menu" role="menu" aria-label="Bitcoin network" hidden/);
+    assert.match(markup, /role="menuitemradio" aria-checked="true" data-network="mainnet"/);
+    assert.match(markup, /role="menuitemradio" aria-checked="false" data-network="testnet"/);
+    // Each option names the checks and defaults it switches.
+    assert.match(markup, /xpub\/ypub\/zpub · WIF 5\/K\/L · coin type 0'/);
+    assert.match(markup, /tpub\/upub\/vpub · WIF 9\/c · coin type 1' · signet shares these/);
+    // And the menu says plainly that no connection is ever made.
+    assert.match(markup, /This page never connects to any network/);
+  }
+  assert.match(appSource, /var hodlNetworkDefault = "mainnet"/);
+  assert.match(appSource, /return hodlNetworkDefault === "testnet" \? 1 : 0/);
+  assert.match(appSource, /function hodlApplyNetworkDefault\(network\)/);
+  assert.match(appSource, /function hodlInitNetworkPicker\(\)/);
+  // The pick reaches every tool's own network control through the control's
+  // ordinary events, so each dependent check follows: the singlesig and
+  // multisig coin-type indexes, and the three mainnet/testnet selects.
+  assert.match(appSource, /coinType\.value = `\$\{hodlDefaultCoinType\(\)\}\$\{hardened \? "'" : ""\}`/);
+  assert.match(appSource, /coinType\.dispatchEvent\(new Event\("input", \{ bubbles: true \}\)\)/);
+  assert.match(appSource, /msigCoinType\.dispatchEvent\(new Event\("input", \{ bubbles: true \}\)\)/);
+  assert.match(appSource, /for \(let id of \["sp-network", "psbt-network", "psbted-network"\]\)/);
+  assert.match(appSource, /hodlSyncSelect\(select, hodlNetworkDefault\)/);
+  assert.match(appSource, /select\.dispatchEvent\(new Event\("change", \{ bubbles: true \}\)\)/);
+  // The choice is never stored: every load opens on mainnet again.
+  assert.doesNotMatch(appSource, /localStorage\.setItem\([^)]*network/i);
+  // The coin takes the Bitcoin Core icon orange; testnet drops it to grey.
+  assert.match(css, /--bitcoin: #f7931a;/);
+  assert.match(css, /\.network-picker-coin \{ fill: var\(--bitcoin\); \}/);
+  assert.match(css, /\.network-picker\[data-network="testnet"\] \.network-picker-coin \{ fill: var\(--faint\); \}/);
+  assert.match(css, /\.network-picker-b \{ fill: #ffffff; \}/);
+  assert.match(css, /\.network-picker-button \{[^}]*min-height: 40px;[^}]*background: var\(--surface-2\)/s);
+  assert.match(css, /\.network-picker-menu \{[^}]*position: absolute;[^}]*background: var\(--surface-2\)/s);
+  // Narrow screens collapse it to the glyph and hang it off the bar's
+  // bottom-right corner — the row is full, so it cannot stay in the flex
+  // flow; the menu anchors to the bar's right edge.
+  const narrow = css.slice(css.indexOf("@media (max-width: 719px)"));
+  assert.match(narrow, /\.network-picker-label, \.network-picker-chevron \{ display: none; \}/);
+  assert.match(narrow, /\.network-picker \{[^}]*position: absolute; right: var\(--site-header-pad\); bottom: 0; transform: translateY\(50%\)/s);
+  assert.match(narrow, /\.network-picker-menu \{[^}]*right: 0;/s);
 });
 
 test("advanced derivation fields use the shared responsive settings grid", () => {
@@ -244,7 +307,7 @@ test("Number bases offers exact Base 2, 4, 8, 16, Crockford Base32, and Base64-a
   assert.ok(app.includes('function hodlNormalizeEntropyFormat(format){return Object.hasOwn(hodlEntropyFormats,String(format??""))?String(format):"bin"}'));
   assert.match(css, /\.global-sync-status \{[\s\S]*?color: var\(--ok\)/);
   assert.match(css, /\.number-base-calculation-list \{/);
-  assert.match(app, /fields:\{[^}]*base4:"",base8:"",base32:"",base64:""/);
+  assert.match(app, /fields:\{[\s\S]*?base4:"",base8:"",base32:"",base64:""/);
   assert.match(app, /function hodlBase64KeyboardMarkup\(\)\{return hodlKeyboardMarkup\(!0,"Base64 entropy","base64-keyboard"\)\}/);
   assert.match(app, /function hodlBindBase64Keyboard\(input\)/);
   assert.match(app, /coin flip \$\{Math\.min\(definition\.remainderBits,coinFlipsEntered\+1\)\} of \$\{definition\.remainderBits\}/);
@@ -275,7 +338,7 @@ test("Cards offers isolated hashed and direct word-selection methods", () => {
   assert.match(app, /name="card-method" value="hashed"/);
   assert.match(app, /name="card-method" value="direct"/);
   assert.match(app, />Direct word selection</);
-  assert.match(appSource, /fields: \{[^}]*cards: "", directCards: ""/);
+  assert.match(appSource, /fields: \{[\s\S]*?cards: "", directCards: ""/);
   assert.match(appSource, /direct \? "" : `<div class="card-suit-pad"/);
   assert.match(appSource, /hodlDirectCardRanks = \["A", "2", "3", "4", "5", "6", "7", "8"\]/);
   assert.match(appSource, /dealt-card dealt-card-rank-only/);
@@ -489,7 +552,7 @@ test("key derivation separates script type from the hardened purpose index", () 
   assert.match(appSource, /hodlSetSelectedScriptType\(target\.value, true\)/);
   assert.match(appSource, /let derivedDefinition = \{ \.\.\.definition, purpose: purposeIndex, purposeHardened: hardening\.purpose \}/);
   assert.match(appSource, /originPath = derivationPlan\?\.originPath \?\?/);
-  assert.match(appSource, /fields: \{ pass: "", script: "bip84", derivationPath: "m\/84'\/0'\/0'\/0\/0", derivationAccountPath: "m\/84'\/0'\/0'", purpose: "84'", purposeHarden: true, coinType: "0'", coinTypeHarden: true, network: "mainnet"/);
+  assert.match(appSource, /fields: \{ pass: "", script: "bip84", derivationPath: `m\/84'\/\$\{hodlDefaultCoinType\(\)\}'\/0'\/0\/0`, derivationAccountPath: `m\/84'\/\$\{hodlDefaultCoinType\(\)\}'\/0'`, purpose: "84'", purposeHarden: true, coinType: `\$\{hodlDefaultCoinType\(\)\}'`, coinTypeHarden: true, network: hodlNetworkDefault/);
 });
 
 test("one editable derivation path replaces schemes and accepts arbitrary depth", () => {
@@ -1095,7 +1158,7 @@ test("header theme toggle cycles dark, light, and OS themes without a flash", ()
   assert.doesNotMatch(appWhitespace, /removeItem\(hodlThemeStorageKey\)/);
   assert.match(appWhitespace, /localStorage\.setItem\(hodlThemeStorageKey,mode\)/);
   assert.match(app, /function hodlApplyTheme\(mode\)/);
-  assert.match(appSource, /hodlInitSecretFieldAutoClear\(\);\s*hodlInitTheme\(\);/);
+  assert.match(appSource, /hodlInitSecretFieldAutoClear\(\);\s*hodlInitNetworkPicker\(\);\s*hodlInitTheme\(\);/);
   assert.match(css, /:root\[data-theme="light"\] \{\s*color-scheme: light;/);
   assert.match(css, /@media print \{\s*:root, :root\[data-theme\] \{/);
   assert.match(css, /\.download-controls \.theme-toggle \{ flex: 0 0 40px; width: 40px; align-self: center; \}/);

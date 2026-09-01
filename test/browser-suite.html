@@ -202,6 +202,49 @@
     assert(imageRequests.length === 0, "Hosted mode fetched an inlined image: " + imageRequests.join(", "));
   });
 
+  await test("header network picker switches the defaults every tool uses", async () => {
+    const picker = document.getElementById("network-picker");
+    const button = document.getElementById("network-picker-button");
+    const menu = document.getElementById("network-picker-menu");
+    const label = document.getElementById("network-picker-label");
+    assert(picker && button && menu && label, "Header network picker is missing");
+    assert(menu.hidden && button.getAttribute("aria-expanded") === "false", "Network menu did not start closed");
+    equal(label.textContent, "Mainnet", "Network picker did not start on Mainnet");
+    equal(picker.dataset.network, "mainnet", "Network picker did not tag mainnet");
+    button.click();
+    assert(!menu.hidden && button.getAttribute("aria-expanded") === "true", "Network menu did not open");
+    const testnet = menu.querySelector('[data-network="testnet"]');
+    assert(testnet && testnet.getAttribute("role") === "menuitemradio", "Testnet option is missing");
+    testnet.click();
+    equal(label.textContent, "Testnet", "Network picker did not switch to Testnet");
+    equal(picker.dataset.network, "testnet", "Network picker did not tag testnet");
+    assert(menu.hidden, "Network menu stayed open after a pick");
+    // Every tool's own network control follows the header's choice, through
+    // the control's ordinary events.
+    equal(document.getElementById("network").value, "1'", "Keys coin type did not follow the header network");
+    assert(document.getElementById("derivation-path").value.startsWith("m/84'/1'/0'"), `Derivation path did not follow: ${document.getElementById("derivation-path").value}`);
+    assert(document.getElementById("network-help").textContent.includes("Testnet"), "Coin type help did not follow the header network");
+    equal(document.getElementById("msig-network").value, "1", "Multisig coin type did not follow the header network");
+    for (const id of ["sp-network", "psbt-network", "psbted-network"]) {
+      equal(document.getElementById(id).value, "testnet", id + " did not follow the header network");
+    }
+    button.click();
+    menu.querySelector('[data-network="mainnet"]').click();
+    equal(label.textContent, "Mainnet", "Network picker did not switch back to Mainnet");
+    equal(document.getElementById("network").value, "0'", "Keys coin type did not restore mainnet");
+    assert(document.getElementById("derivation-path").value.startsWith("m/84'/0'/0'"), "Derivation path did not restore mainnet");
+    equal(document.getElementById("msig-network").value, "0", "Multisig coin type did not restore mainnet");
+    for (const id of ["sp-network", "psbt-network", "psbted-network"]) {
+      equal(document.getElementById(id).value, "mainnet", id + " did not restore mainnet");
+    }
+    // Escape closes the menu without a choice, and nothing is ever stored.
+    button.click();
+    assert(!menu.hidden, "Network menu did not reopen");
+    button.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert(menu.hidden && button.getAttribute("aria-expanded") === "false", "Escape did not close the network menu");
+    assert(!Object.keys(localStorage).some((key) => /network/i.test(key)), "The network choice must not persist to storage");
+  });
+
   await test("limited private-key prefixes replace the full keypad until selected", async () => {
     await chooseMode("Private key");
     const privateKey = await until(() => document.getElementById("key"), "private-key input");

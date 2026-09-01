@@ -407,6 +407,15 @@ hodlRootEl.innerHTML = `
       <span class="site-logo" aria-hidden="true"></span>
       <span class="site-title">EntropyLab</span>
       <span class="site-version"><span class="site-version-number">v{{VERSION}}</span> <span class="site-version-tag">(Latest)</span></span>
+      <div class="network-picker" id="network-picker" data-network="mainnet">
+        <button type="button" class="network-picker-button" id="network-picker-button" aria-haspopup="menu" aria-expanded="false" aria-controls="network-picker-menu" aria-label="Bitcoin network: Mainnet. Change the network the tools derive and check for"><svg class="network-picker-glyph" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><circle class="network-picker-coin" cx="12" cy="12" r="12"/><path class="network-picker-b" fill-rule="evenodd" d="M17.288 10.291c.24-1.59-.974-2.45-2.64-3.03l.54-2.153-1.315-.33-.525 2.107c-.345-.087-.705-.167-1.064-.25l.526-2.127-1.32-.33-.54 2.165c-.285-.067-.565-.132-.84-.2l-1.815-.45-.35 1.407s.975.225.955.236c.535.136.63.486.615.766l-1.477 5.92c-.075.166-.24.406-.614.314.015.02-.96-.24-.96-.24l-.66 1.51 1.71.426.93.242-.54 2.19 1.32.327.54-2.17c.36.1.705.19 1.05.273l-.51 2.154 1.32.33.545-2.19c2.24.427 3.93.257 4.64-1.774.57-1.637-.03-2.58-1.217-3.196.854-.193 1.5-.76 1.68-1.93h.01zM14.278 14.511c-.404 1.64-3.157.75-4.05.53l.72-2.9c.896.23 3.757.67 3.33 2.37zM14.688 10.271c-.37 1.49-2.662.735-3.405.55l.654-2.64c.744.18 3.137.524 2.75 2.084v.006z"/></svg><span class="network-picker-label" id="network-picker-label">Mainnet</span><svg class="network-picker-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg></button>
+        <div class="network-picker-menu" id="network-picker-menu" role="menu" aria-label="Bitcoin network" hidden>
+          <p class="network-picker-title">Network for derivation and checks</p>
+          <button type="button" class="network-picker-option" role="menuitemradio" aria-checked="true" data-network="mainnet"><span class="network-picker-option-text"><strong>Mainnet</strong><span class="network-picker-option-desc">Real coins · addresses 1…, 3…, bc1q…, bc1p… · xpub/ypub/zpub · WIF 5/K/L · coin type 0'</span></span></button>
+          <button type="button" class="network-picker-option" role="menuitemradio" aria-checked="false" data-network="testnet"><span class="network-picker-option-text"><strong>Testnet</strong><span class="network-picker-option-desc">Practice coins, no value · addresses m…/n…, 2…, tb1q…, tb1p… · tpub/upub/vpub · WIF 9/c · coin type 1' · signet shares these</span></span></button>
+          <p class="network-picker-note">This page never connects to any network — the choice sets the address formats, key versions, and checks the tools run with. A tool's own advanced fields can still override it.</p>
+        </div>
+      </div>
       <span class="network-status" id="network-status" data-state="online" role="status" aria-label="Network status: online">Online</span>
       <div class="download-controls">
         <a class="btn secondary download-html header-button" href="entropylab.html" download="entropylab.html" aria-label="Download EntropyLab"><svg class="download-mark" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg><span class="control-label">Download</span></a>
@@ -7384,7 +7393,7 @@ function hodlResetMsigForm() {
   let advanced = document.getElementById("msig-advanced");
   if (advanced) advanced.open = !1;
   let coinType = document.getElementById("msig-network");
-  if (coinType) coinType.value = "0";
+  if (coinType) coinType.value = String(hodlDefaultCoinType());
   hodlUpdateCoinTypeHelp(coinType, document.getElementById("msig-network-help"));
   let branchStart = document.getElementById("msig-branch-start"), branchRange = document.getElementById("msig-branch-range"), addressStart = document.getElementById("msig-address-start"), addressRange = document.getElementById("msig-address-range");
   if (branchStart) branchStart.value = "0";
@@ -9393,7 +9402,7 @@ function hodlPrivateKeyValues(fields) {
 }
 function hodlNewKeyState(name, keyId, keyNumber) {
   let id = keyId ?? hodlNextKeyId++, number = keyNumber ?? hodlNextKeyNumber++;
-  return { id, number, color: hodlKeyColor(id), name: name || hodlDefaultKeyName(number), mode: "dice", diceMethod: "coldcard", cardMethod: "hashed", seedMethod: "words", seedZeroIndexed: false, cardColemanSymbols: false, entropyFormat: "bin", globalSync: false, globalSyncSource: "", globalSyncBitCount: 0, seedAutocomplete: true, passphraseBip39Words: false, brainWalletOutput: "scalar", passphraseAutocomplete: true, brainWalletTrim: false, showCards: false, showDiceFairness: false, targetWords: 24, diceCoinPositions: [], lastWord: "", dplusLastWord: "", result: null, reveal: false, accountId: "bip84", error: "", fields: { pass: "", script: "bip84", derivationPath: "m/84'/0'/0'/0/0", derivationAccountPath: "m/84'/0'/0'", purpose: "84'", purposeHarden: true, coinType: "0'", coinTypeHarden: true, network: "mainnet", account: "0'", accountHarden: true, branchStart: "0", branchHarden: false, branchRange: "1", addressStart: "0", addressHarden: false, addressRange: "1", dice: "", bitboxDice: "", dplusDice: "", hex: "", bin: "", base4: "", base8: "", base32: "", base64: "", cards: "", directCards: "", seed: "", seedNumbers: "", brainLab: "", key: "", keyKind: "wif", privateKeys: { wif: "", "hex-key": "", minikey: "", brain: "" } } };
+  return { id, number, color: hodlKeyColor(id), name: name || hodlDefaultKeyName(number), mode: "dice", diceMethod: "coldcard", cardMethod: "hashed", seedMethod: "words", seedZeroIndexed: false, cardColemanSymbols: false, entropyFormat: "bin", globalSync: false, globalSyncSource: "", globalSyncBitCount: 0, seedAutocomplete: true, passphraseBip39Words: false, brainWalletOutput: "scalar", passphraseAutocomplete: true, brainWalletTrim: false, showCards: false, showDiceFairness: false, targetWords: 24, diceCoinPositions: [], lastWord: "", dplusLastWord: "", result: null, reveal: false, accountId: "bip84", error: "", fields: { pass: "", script: "bip84", derivationPath: `m/84'/${hodlDefaultCoinType()}'/0'/0/0`, derivationAccountPath: `m/84'/${hodlDefaultCoinType()}'/0'`, purpose: "84'", purposeHarden: true, coinType: `${hodlDefaultCoinType()}'`, coinTypeHarden: true, network: hodlNetworkDefault, account: "0'", accountHarden: true, branchStart: "0", branchHarden: false, branchRange: "1", addressStart: "0", addressHarden: false, addressRange: "1", dice: "", bitboxDice: "", dplusDice: "", hex: "", bin: "", base4: "", base8: "", base32: "", base64: "", cards: "", directCards: "", seed: "", seedNumbers: "", brainLab: "", key: "", keyKind: "wif", privateKeys: { wif: "", "hex-key": "", minikey: "", brain: "" } } };
 }
 function hodlNewLabState() {
   let state = hodlNewKeyState("Key Station", 0, 0);
@@ -9725,14 +9734,14 @@ function hodlRestoreKey() {
     hodlSyncSelect(document.getElementById("script-type"), "bip84");
     hodlSetPurpose(84);
     let network2 = document.getElementById("network");
-    if (network2) network2.value = "0";
+    if (network2) network2.value = String(hodlDefaultCoinType());
     hodlUpdateCoinTypeHelp(network2);
     let account2 = document.getElementById("account");
     if (account2) account2.value = "0";
     let derivationPath2 = document.getElementById("derivation-path");
     if (derivationPath2) {
-      derivationPath2.value = "m/84'/0'/0'/0/0";
-      derivationPath2.dataset.accountPath = "m/84'/0'/0'";
+      derivationPath2.value = `m/84'/${hodlDefaultCoinType()}'/0'/0/0`;
+      derivationPath2.dataset.accountPath = `m/84'/${hodlDefaultCoinType()}'/0'`;
     }
     let branchStart2 = document.getElementById("branch-start"), branchRange2 = document.getElementById("branch-range"), addressStart2 = document.getElementById("address-start"), addressRange2 = document.getElementById("address-range");
     if (branchStart2) branchStart2.value = "0";
@@ -10131,9 +10140,9 @@ function hodlNewMsigState(name, msigId, msigNumber) {
       legacyBip87: !1,
       keyOrder: "sorted",
       xpubs: ["", "", ""],
-      coinType: "0",
+      coinType: String(hodlDefaultCoinType()),
       coinTypeHarden: true,
-      network: "mainnet",
+      network: hodlNetworkDefault,
       accountHarden: true,
       branchStart: "0",
       branchHarden: false,
@@ -10849,6 +10858,92 @@ function hodlInitBetaWarningDismiss() {
     banner.hidden = true;
   };
 }
+// The session-wide Bitcoin network, chosen from the header picker. It never
+// connects anything anywhere — it only sets which address formats, extended
+// key versions, WIF prefixes, and coin-type indexes new work defaults to.
+// Not persisted: every load starts on mainnet, the safe direction for a
+// wallet tool. A tool's own advanced fields can still override it per item.
+var hodlNetworkDefault = "mainnet";
+function hodlDefaultCoinType() {
+  return hodlNetworkDefault === "testnet" ? 1 : 0;
+}
+// Pushing the choice into each tool's own network control — and letting the
+// control's ordinary input/change handlers run — keeps every downstream
+// consumer (help text, path preview, key-prefix checks, result invalidation,
+// the custom select chrome) in step without a second code path.
+function hodlApplyNetworkDefault(network) {
+  hodlNetworkDefault = network === "testnet" ? "testnet" : "mainnet";
+  let coinType = document.getElementById("network");
+  if (coinType) {
+    let hardened = document.getElementById("network-harden")?.checked !== false;
+    coinType.value = `${hodlDefaultCoinType()}${hardened ? "'" : ""}`;
+    coinType.dispatchEvent(new Event("input", { bubbles: true }));
+    coinType.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  let msigCoinType = document.getElementById("msig-network");
+  if (msigCoinType) {
+    msigCoinType.value = String(hodlDefaultCoinType());
+    msigCoinType.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  for (let id of ["sp-network", "psbt-network", "psbted-network"]) {
+    let select = document.getElementById(id);
+    if (!select) continue;
+    hodlSyncSelect(select, hodlNetworkDefault);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+}
+function hodlInitNetworkPicker() {
+  let root = document.getElementById("network-picker"), button = document.getElementById("network-picker-button"), menu = document.getElementById("network-picker-menu"), label = document.getElementById("network-picker-label");
+  if (!root || !button || !menu || !label) return;
+  let options = [...menu.querySelectorAll("[data-network]")];
+  let render = () => {
+    let name = hodlNetworkDefault === "testnet" ? "Testnet" : "Mainnet";
+    root.dataset.network = hodlNetworkDefault;
+    label.textContent = name;
+    button.setAttribute("aria-label", `Bitcoin network: ${name}. Change the network the tools derive and check for`);
+    options.forEach((option) => option.setAttribute("aria-checked", String(option.dataset.network === hodlNetworkDefault)));
+  };
+  let close = () => {
+    menu.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+  };
+  let open = () => {
+    menu.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+  };
+  button.addEventListener("click", () => menu.hidden ? open() : close());
+  button.addEventListener("keydown", (event) => {
+    if (!["ArrowDown", "Enter", " "].includes(event.key)) return;
+    event.preventDefault();
+    open();
+    (options.find((option) => option.getAttribute("aria-checked") === "true") || options[0])?.focus();
+  });
+  menu.addEventListener("keydown", (event) => {
+    let index = options.indexOf(document.activeElement);
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      options[Math.min(index + 1, options.length - 1)]?.focus();
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      options[Math.max(index - 1, 0)]?.focus();
+    }
+  });
+  root.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    close();
+    button.focus({ preventScroll: true });
+  });
+  options.forEach((option) => option.addEventListener("click", () => {
+    hodlApplyNetworkDefault(option.dataset.network);
+    render();
+    close();
+    button.focus({ preventScroll: true });
+  }));
+  document.addEventListener("pointerdown", (event) => {
+    if (!root.contains(event.target)) close();
+  });
+  render();
+}
 function hodlInitTheme() {
   hodlApplyTheme(hodlReadThemeMode());
   let toggle = document.getElementById("theme-toggle");
@@ -10975,6 +11070,7 @@ function hodlBoot() {
   hodlInitSpBench();
   hodlInitClearActionState();
   hodlInitSecretFieldAutoClear();
+  hodlInitNetworkPicker();
   hodlInitTheme();
   hodlInitBetaWarningDismiss();
   hodlInitMasterFingerprintPreview();
