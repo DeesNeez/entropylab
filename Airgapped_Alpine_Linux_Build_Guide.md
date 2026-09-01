@@ -235,8 +235,8 @@ gsed -i 's/$/ ip=off/' boot/cmdline.txt
 
 ```zsh
 diskutil list
-# Replace diskX with your actual ID (e.g., disk4)
-diskutil partitionDisk /dev/diskX MBR "MS-DOS FAT32" ENTROPYLAB 0b
+# Replace <disk_id> with your actual disk identifier (e.g., disk4)
+diskutil partitionDisk /dev/<disk_id> MBR "MS-DOS FAT32" ENTROPYLAB 0b
 cp -R boot/* /Volumes/ENTROPYLAB/
 mkdir -p /Volumes/ENTROPYLAB/cache
 cp -R cache/* /Volumes/ENTROPYLAB/cache/
