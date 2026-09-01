@@ -72,15 +72,18 @@ test("wallet coin type indexes enable and default to mainnet", () => {
 
 test("the header network picker sets the network every tool defaults to", () => {
   for (const markup of [template, appWhitespace]) {
-    // The control rides the fixed header, after the version and before the
-    // connectivity tag, and ships in the mainnet state.
+    // The control rides the fixed header's action row, between the GitHub
+    // link and the theme toggle, and ships in the mainnet state.
     const header = markup.indexOf('<div class="site-header no-print">');
     const wrapper = markup.indexOf('<div class="wrap">');
     const picker = markup.indexOf('id="network-picker"');
     assert.ok(header >= 0 && header < picker && picker < wrapper, "the network picker must sit inside the header");
+    const controls = markup.indexOf('class="download-controls"');
+    const github = markup.indexOf("github-repo-link");
+    const theme = markup.indexOf('id="theme-toggle"');
     assert.ok(
-      markup.indexOf('class="site-version"') < picker && picker < markup.indexOf('id="network-status"'),
-      "the picker belongs between the version and the connectivity tag",
+      controls >= 0 && controls < picker && github < picker && picker < theme,
+      "the picker belongs inside the header controls, between the GitHub link and the theme toggle",
     );
     assert.match(markup, /id="network-picker" data-network="mainnet"/);
     assert.match(markup, /id="network-picker-button"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"[^>]*aria-controls="network-picker-menu"/);
@@ -119,14 +122,17 @@ test("the header network picker sets the network every tool defaults to", () => 
   assert.match(css, /\.network-picker\[data-network="testnet"\] \.network-picker-coin \{ fill: var\(--faint\); \}/);
   assert.match(css, /\.network-picker-b \{ fill: #ffffff; \}/);
   assert.match(css, /\.network-picker-button \{[^}]*min-height: 40px;[^}]*background: var\(--surface-2\)/s);
-  assert.match(css, /\.network-picker-menu \{[^}]*position: absolute;[^}]*background: var\(--surface-2\)/s);
-  // Narrow screens collapse it to the glyph and hang it off the bar's
-  // bottom-right corner — the row is full, so it cannot stay in the flex
-  // flow; the menu anchors to the bar's right edge.
+  // The button lives at the bar's right edge, so the menu opens leftward
+  // from its right edge rather than past the viewport.
+  assert.match(css, /\.network-picker-menu \{[^}]*position: absolute;[^}]*right: 0;[^}]*background: var\(--surface-2\)/s);
+  // Narrow screens collapse it to a compact glyph chip hung off the bar's
+  // bottom-right corner, below the theme toggle — the row is full, so it
+  // cannot stay in the flex flow. The 75% straddle clears the 40px controls
+  // above the rule and the content below it.
   const narrow = css.slice(css.indexOf("@media (max-width: 719px)"));
   assert.match(narrow, /\.network-picker-label, \.network-picker-chevron \{ display: none; \}/);
-  assert.match(narrow, /\.network-picker \{[^}]*position: absolute; right: var\(--site-header-pad\); bottom: 0; transform: translateY\(50%\)/s);
-  assert.match(narrow, /\.network-picker-menu \{[^}]*right: 0;/s);
+  assert.match(narrow, /\.network-picker \{[^}]*position: absolute; right: var\(--site-header-pad\); bottom: 0; transform: translateY\(75%\)/s);
+  assert.match(narrow, /\.network-picker-button \{ min-height: 0; padding: 4px 8px; \}/);
 });
 
 test("advanced derivation fields use the shared responsive settings grid", () => {

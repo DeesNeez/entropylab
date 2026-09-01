@@ -687,13 +687,13 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
 }
 .network-status[data-state="offline"] { color: var(--ok-bright); }
 .network-status[data-state="online"] { color: var(--danger-bright); }
-/* The network picker sits on the identity side of the bar, next to the
-   version: it states what the tools are set to the way the version states
-   what build they are. The button takes the secondary header-control look,
-   with the Bitcoin Core icon's orange coin beside the network's name — the
-   same convention mempool.space uses in its network switcher. Testnet drops
-   the coin to the faint grey: orange is reserved for real coins. */
-.network-picker { position: relative; flex: 0 0 auto; margin-left: 6px; }
+/* The network picker rides the bar's action row, between the GitHub link and
+   the theme toggle: it states what the tools are set to the way the version
+   states what build they are. The button takes the secondary header-control
+   look, with the Bitcoin Core icon's orange coin beside the network's name —
+   the same convention mempool.space uses in its network switcher. Testnet
+   drops the coin to the faint grey: orange is reserved for real coins. */
+.network-picker { position: relative; flex: 0 0 auto; }
 .network-picker-button {
   display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 12px;
   border: 1px solid var(--border); border-radius: 8px;
@@ -707,8 +707,10 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
 .network-picker-b { fill: #ffffff; }
 .network-picker-chevron { color: var(--accent); transition: transform 120ms ease; }
 .network-picker-button[aria-expanded="true"] .network-picker-chevron { transform: rotate(180deg); }
+/* Right-anchored: the button sits at the bar's right edge, so the menu opens
+   leftward into the page instead of past the viewport. */
 .network-picker-menu {
-  position: absolute; z-index: 100; top: calc(100% + 6px); left: 0; width: 340px;
+  position: absolute; z-index: 100; top: calc(100% + 6px); right: 0; width: 340px;
   max-width: calc(100vw - 2 * var(--site-header-pad));
   padding: 6px; border: 1px solid var(--border); border-radius: 12px;
   background: var(--surface-2); box-shadow: 0 16px 36px rgb(0 0 0 / 55%);
@@ -1708,19 +1710,19 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 @media (max-width: 719px) {
   :root { --site-header-pad: 12px; }
   .control-label { display: none; }
-  /* Out of the flex row, which is full: hung off the bar's bottom-right
-     corner the way the connectivity tag hangs off the bottom-left, the
-     coin-only button keeps its place without costing the row any width. The
+  /* Out of the flex row, which is full: a chip hung off the bar's
+     bottom-right corner, below the theme toggle it follows in the row — the
+     connectivity tag's treatment at the opposite corner. At 24px tall it
+     straddles three quarters down, which is what clears both the 40px
+     controls above the rule and the content 20px below it; the coin's
      colour still carries the network. */
   .network-picker {
-    position: absolute; right: var(--site-header-pad); bottom: 0; transform: translateY(50%);
-    margin-left: 0; z-index: 1;
+    position: absolute; right: var(--site-header-pad); bottom: 0; transform: translateY(75%);
+    z-index: 1;
   }
   .network-picker-label, .network-picker-chevron { display: none; }
-  .network-picker-button { padding: 0 11px; }
-  /* Anchored to the picker's right edge, which is the bar's right edge; the
-     cap keeps it inside the viewport padding. */
-  .network-picker-menu { left: auto; right: 0; }
+  .network-picker-button { min-height: 0; padding: 4px 8px; }
+  .network-picker-button .network-picker-glyph { width: 14px; height: 14px; }
   /* Short tool names here: the strip is the page's only horizontal scroll, so
      fitting more of it on screen matters more than the fuller wording. */
   .workspace-tab-full { display: none; }
