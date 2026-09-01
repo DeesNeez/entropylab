@@ -631,7 +631,7 @@ hodlRootEl.innerHTML = `
       <div class="tool-intro" id="msig-tool-intro" hidden>
         <div class="kicker">Multiple keys, one wallet</div>
         <h2>Derive a multisig wallet</h2>
-        <p class="muted msig-intro">Combine extended public keys into a multisignature wallet. Paste each key origin and extended public key as exported by its signer: <span class="mono">[fingerprint/48h/0h/0h/2h]xpub\u2026</span>. A trailing branch step such as <span class="mono">/0/*</span> is accepted and ignored — the receive/change branches and address indexes are derived for you. A longer trailing path such as <span class="mono">/0/20</span> or <span class="mono">/0/0/20/*</span> is honored as descriptor key derivation in full: the co-signer's public keys derive through it, and the exported descriptor carries it before the branch step. Private keys are not needed. The derived addresses can receive bitcoin, and spending requires the configured number of signatures.</p>
+        <p class="muted msig-intro">Combine extended public keys into a multisignature wallet. Paste each key origin and extended public key as exported by its signer: <span class="mono">[fingerprint/48h/0h/0h/2h]xpub…</span>. A descriptor holding one co-signer key works too; split a full multisig descriptor into one key per field. A trailing branch step such as <span class="mono">/0/*</span> is accepted and ignored — the receive/change branches and address indexes are derived for you. A longer trailing path such as <span class="mono">/0/20</span> or <span class="mono">/0/0/20/*</span> is honored as descriptor key derivation in full: the co-signer's public keys derive through it, and the exported descriptor carries it before the branch step. Private keys are not needed. The derived addresses can receive bitcoin, and spending requires the configured number of signatures.</p>
       </div>
       <section class="key-manager no-print" id="msig-manager" hidden>
       <div class="key-tab-strip"><div class="key-tabs" id="msig-tabs" role="tablist" aria-label="Multisigs"></div><div class="add-item-control"><button class="add-key" id="add-msig" type="button" aria-label="Open MS Station to derive another multisig" aria-describedby="add-msig-tooltip">+</button><span class="add-item-tooltip" id="add-msig-tooltip" role="tooltip">Open MS Station</span></div><div class="add-item-control"><button class="add-key remove-key" id="delete-msig" type="button" aria-label="Delete current multisig" aria-describedby="delete-msig-tooltip" disabled>−</button><span class="add-item-tooltip" id="delete-msig-tooltip" role="tooltip">Delete this multisig</span></div></div>
@@ -6643,8 +6643,32 @@ function hodlSummarizeMultisigScriptKinds(kinds) {
     mixed: unique.length > 1
   }
 }
+// Co-signer fields also accept a pasted output descriptor (issue #175): the
+// field only needs one key origin plus extended public key, so a descriptor
+// is reduced to its key expressions. A descriptor that carries exactly one
+// co-signer key (a single-sig wrapper, or one key inside multi) parses
+// through with the key expression kept whole, its trailing path honored
+// exactly as if it were typed by hand; a full multisig descriptor lists
+// every co-signer and must not be silently reduced to an arbitrary position,
+// so it fails with directions.
+function hodlDescriptorKeyExpressions(raw) {
+  let text = hodlStripDescriptorChecksum(String(raw ?? "").trim());
+  if (!text.includes("(")) return null;
+  let pattern = /(\[[0-9a-fA-F]{8}\/[0-9A-Za-z/'hH]+\])?((?:[xyztuv]pub|[YZUV]pub)[1-9A-HJ-NP-Za-km-z]{20,})(?:\/(?:<\d+(?:;\d+)*>|\d+))*(?:\/\*(?:<\d+(?:;\d+)>)?)?/g, expressions = [];
+  for (let match of text.matchAll(pattern)) expressions.push({ origin: match[1] || null, key: match[2], expression: match[0] });
+  return expressions;
+}
 function hodlParseMultisigCosigner(raw) {
-  let parsedOrigin = hodlParseKeyOrigin(raw), parsed = hodlParseExtendedKey(parsedOrigin.key);
+  let text = String(raw ?? "").trim(), expressions = hodlDescriptorKeyExpressions(text);
+  if (expressions) {
+    if (!expressions.length) throw new Error("This descriptor does not contain an extended public key. Paste the co-signer's extended public key, for example [fingerprint/48h/0h/0h/2h]Zpub….");
+    if (expressions.length > 1) throw new Error(`This descriptor lists ${expressions.length} co-signer keys. Paste one key per co-signer field so the signing order stays explicit.`);
+    // With an origin the whole expression goes through, its trailing path
+    // honored like a typed value; without one the bare key is all the field
+    // can take, so the descriptor's derivation suffix stays behind.
+    text = expressions[0].origin ? expressions[0].expression : expressions[0].key;
+  }
+  let parsedOrigin = hodlParseKeyOrigin(text), parsed = hodlParseExtendedKey(parsedOrigin.key);
   parsed.origin = parsedOrigin.origin;
   parsed.derivationPath = parsedOrigin.derivationPath || "";
   if (parsed.derivationPath) {
