@@ -1022,6 +1022,9 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 #sp-modes + .station-key-source { margin-top: 20px; }
 .station-key-source > .label { margin: 0 0 8px; }
 .station-key-source > .field-note { display: block; margin: 8px 0 0; }
+.msig-key-reuse-toggle { margin-top: 12px; }
+.msig-station-key-source #msig-session-key-status:empty { display: none; }
+.msig-station-key-source + .msig-threshold-labels { margin-top: 0; }
 .session-key-picker { display: flex; flex-wrap: wrap; gap: 8px; }
 .session-key-picker[hidden] { display: none; }
 .session-key-option {

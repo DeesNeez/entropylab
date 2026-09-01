@@ -1698,18 +1698,16 @@ test("derived key results put private recovery before script type and addresses"
 
 test("every MS Station co-signer row can pick any session key, and key reuse offers a derivation path", () => {
   for (const markup of [template, appSource]) {
-    assert.doesNotMatch(markup, /msig-station-key-source/);
-    assert.doesNotMatch(markup, /id="msig-session-keys"/);
-    assert.doesNotMatch(markup, /id="msig-reuse-session-keys"/);
-    assert.doesNotMatch(markup, /id="msig-session-key-status"/);
+    assert.match(markup, /class="station-key-source msig-station-key-source"[\s\S]*id="msig-session-keys"[\s\S]*id="msig-reuse-session-keys"[\s\S]*id="msig-session-key-status"/);
+    assert.match(markup, /Bring in a key from Key Station/);
   }
   assert.match(appSource, /function hodlSessionMsigKeys\(\) \{/);
   assert.match(appSource, /function hodlMatchingMsigExport\(result\) \{/);
   assert.match(appSource, /function hodlSyncMsigKeyAvatar\(row\) \{/);
   assert.match(appSource, /chips\.className = "msig-session-keys"/);
-  assert.match(appSource, /button\.className = "msig-session-key"/);
-  assert.match(appSource, /function hodlPickMsigSessionKey\(state, row\) \{/);
-  assert.match(appSource, /button\.onclick = \(\) => hodlPickMsigSessionKey\(state, row\)/);
+  assert.match(appSource, /hodlCreateMsigSessionKeyButton\(option, "msig-session-key"/);
+  assert.match(appSource, /function hodlPickMsigSessionKey\(state, row = hodlMsigNextKeyRow\(\)\) \{/);
+  assert.match(appSource, /\(\) => hodlPickMsigSessionKey\(option\.state, row\)/);
   assert.match(appSource, /hodlFillKeyTabLifehash\(image, fingerprint\)/);
   assert.match(appSource, /hodlRefreshMsigSessionPickers\(\)/);
   // Reusing a key for another co-signer must come with a derivation path so
@@ -1725,7 +1723,10 @@ test("every MS Station co-signer row can pick any session key, and key reuse off
   assert.match(appSource, /function hodlMsigDerivedNode\(parsed\) \{/);
   assert.match(appSource, /let node = hodlMsigDerivedNode\(parsed\);\s*return hodlHex\.encode\(node\.publicKey\)/);
   assert.match(appSource, /\]\$\{canonical\}\$\{parsed\.derivationPath \? "\/" \+ parsed\.derivationPath : ""\}/);
-  assert.doesNotMatch(appSource, /hodlMsigKeyTarget|reuseSessionKeys/);
+  assert.match(appSource, /var hodlMsigKeyTarget = null/);
+  assert.match(appSource, /function hodlMsigNextKeyRow\(\) \{/);
+  assert.match(appSource, /reuseSessionKeys\?\.addEventListener\("change"/);
+  assert.match(appSource, /Reused keys need different derivation paths\./);
   assert.match(css, /\.msig-session-keys \{/);
   assert.match(css, /\.msig-session-key \{/);
   assert.match(css, /\.msig-session-key\.active/);
