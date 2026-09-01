@@ -4,6 +4,9 @@
 
 This guide provides a professional workflow for creating a bootable, air-gapped image that loads the `entropylab.html` application. This build is designed for maximum security, utilizing a "Diskless" (RAM-only) mode and strict privilege separation to ensure the browser is isolated from the system.
 
+> [!CAUTION]
+> **Hardware Requirement:** This diskless build requires a Raspberry Pi 4 or 5 with **at least 2GB of RAM**. Because the entire operating system and package set are loaded into a RAM disk (`tmpfs`) during boot, 1GB models will likely encounter Out-of-Memory (OOM) errors and fail to boot.
+
 ## 🎯 Project Goal
 To create a "zero-trust" runtime environment where the attack surface is minimized. This build ensures that even if a vulnerability is found in the rendering engine, the attacker is trapped in a non-privileged user account with no network access.
 
