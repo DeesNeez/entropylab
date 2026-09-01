@@ -638,7 +638,7 @@ hodlRootEl.innerHTML = `
       <div class="tool-intro" id="msig-tool-intro" hidden>
         <div class="kicker">Multiple keys, one wallet</div>
         <h2>Derive a multisig wallet</h2>
-        <p class="muted msig-intro">Combine extended public keys into a multisignature wallet. Paste each key origin and extended public key as exported by its signer: <span class="mono">[fingerprint/48h/0h/0h/2h]xpub\u2026</span>. Private keys are not needed. The derived addresses can receive bitcoin, and spending requires the configured number of signatures.</p>
+        <p class="muted msig-intro">Combine extended public keys into a multisignature wallet. Paste each key origin and extended public key as exported by its signer: <span class="mono">[fingerprint/48h/0h/0h/2h]xpub\u2026</span>. A trailing descriptor path such as <span class="mono">/0/*</span> is accepted and ignored — the receive/change branches and address indexes are derived for you. Private keys are not needed. The derived addresses can receive bitcoin, and spending requires the configured number of signatures.</p>
       </div>
       <section class="key-manager no-print" id="msig-manager" hidden>
       <div class="key-tab-strip"><div class="key-tabs" id="msig-tabs" role="tablist" aria-label="Multisigs"></div><div class="add-item-control"><button class="add-key" id="add-msig" type="button" aria-label="Open MS Station to derive another multisig" aria-describedby="add-msig-tooltip">+</button><span class="add-item-tooltip" id="add-msig-tooltip" role="tooltip">Open MS Station</span></div><div class="add-item-control"><button class="add-key remove-key" id="delete-msig" type="button" aria-label="Delete current multisig" aria-describedby="delete-msig-tooltip" disabled>−</button><span class="add-item-tooltip" id="delete-msig-tooltip" role="tooltip">Delete this multisig</span></div></div>
@@ -6432,7 +6432,7 @@ function hodlAssertPrivateKeyKind(value, network, kind, trimBrainWallet = false)
   return candidate;
 }
 function hodlFilterXpub(e) {
-  return String(e ?? "").replace(/[^A-Za-z0-9[\]/']/g, "");
+  return String(e ?? "").replace(/[^A-Za-z0-9[\]/'*]/g, "");
 }
 function hodlNormalizeOriginPath(path) {
   return String(path ?? "").trim().replace(/^m\//i, "").replace(/'/g, "h").replace(/H/g, "h");
@@ -6441,10 +6441,12 @@ function hodlParseKeyOrigin(raw) {
   let input = String(raw ?? "").trim();
   let match = input.match(/^\[([0-9a-fA-F]{8})\/([0-9A-Za-z/']+)\](.+)$/);
   if (!match) return { origin: null, key: input };
-  let fingerprint = match[1].toLowerCase(), path = hodlNormalizeOriginPath(match[2]), rest = String(match[3] || "").trim().replace(/\/(?:<\d+(?:;\d+)*>|\d+)\/\*$/, "");
   // A trailing path after the extended key (xpub…/1) is descriptor key
   // derivation: the co-signer's public keys are derived through it, so one
-  // account key can serve again under a different path.
+  // account key can serve again under a different path. A branch wildcard
+  // form (/0/*, /<0;1>/*) is decoration — the app derives the branches
+  // itself — and a trailing slash alone is decoration too.
+  let fingerprint = match[1].toLowerCase(), path = hodlNormalizeOriginPath(match[2]), rest = String(match[3] || "").trim().replace(/\/+$/, "").replace(/\/(?:<\d+(?:;\d+)*>|\d+)\/\*$/, "");
   let suffix = rest.match(/^(.*?)((?:\/\d+[hH']?)+)$/), key = suffix ? suffix[1] : rest, derivationPath = suffix ? hodlNormalizeOriginPath(suffix[2]).replace(/^\//, "") : "";
   if (fingerprint === "00000000") throw new Error("Key origin fingerprint 00000000 is not a real master fingerprint.");
   if (!/^(?:\d+h?)(?:\/\d+h?)*$/.test(path)) throw new Error("Key origin path must look like 48h/0h/0h/2h.");

@@ -106,6 +106,8 @@ test("filter keeps descriptor origin punctuation", () => {
   const raw = "[73c5da0a/48h/1h/0h/2h]tpubABC";
   assert.equal(hodlFilterXpub(raw), raw);
   assert.equal(hodlFilterXpub("[73c5da0a/48'/1'/0'/2']tpubABC"), "[73c5da0a/48'/1'/0'/2']tpubABC");
+  // A trailing wildcard survives the field filter so the parser can see it.
+  assert.equal(hodlFilterXpub(`${raw}/0/*`), `${raw}/0/*`);
 });
 
 test("origin parse normalizes apostrophes and strips /0/*", () => {
@@ -117,6 +119,26 @@ test("origin parse normalizes apostrophes and strips /0/*", () => {
   assert.equal(parsed.origin.path, "48h/1h/0h/2h");
   assert.match(parsed.key, /^tpubDFH9/);
   assert.equal(hodlParseKeyOrigin("tpubABC").origin, null);
+});
+
+test("origin parse tolerates branch wildcards and lone trailing slashes as decoration", () => {
+  const body = "[73c5da0a/48h/1h/0h/2h]tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ";
+  const bare = hodlParseKeyOrigin(body);
+  for (const suffix of ["/0/*", "/<0;1>/*", "/", "/0/*/"]) {
+    const parsed = hodlParseKeyOrigin(body + suffix);
+    assert.equal(parsed.key, bare.key, `suffix ${suffix} was not fully stripped`);
+    assert.deepEqual(parsed.origin, bare.origin, `suffix ${suffix} changed the origin`);
+    assert.equal(parsed.derivationPath, "", `suffix ${suffix} must not become a derivation path`);
+  }
+});
+
+test("origin parse honors a trailing numeric path, with or without decoration", () => {
+  const body = "[73c5da0a/48h/1h/0h/2h]tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ";
+  assert.equal(hodlParseKeyOrigin(body + "/0/1/0").derivationPath, "0/1/0");
+  // A trailing slash alone is decoration; the path ahead of it still applies.
+  assert.equal(hodlParseKeyOrigin(body + "/0/1/0/").derivationPath, "0/1/0");
+  // The branch wildcard step is decoration; the steps ahead of it are honored.
+  assert.equal(hodlParseKeyOrigin(body + "/1/0/*").derivationPath, "1");
 });
 
 test("placeholder fingerprint 00000000 is rejected", () => {
