@@ -58,11 +58,13 @@ This creates the project folder in the **root level of your User folder** (e.g.,
 ```zsh
 mkdir -p ~/entropylab/{boot,cache,ovl_root,app_assets}
 cd ~/entropylab
-
-echo "Assets folder ready. Please copy entropylab.html and assets into ~/entropylab/app_assets"
 ```
 
-**Note:** Ensure your main file is named `entropylab.html` and placed in the `app_assets` folder before proceeding.
+> [!CAUTION]
+> **STOP: Asset Placement Required**
+> The build automation expects your web application to reside in ~/entropylab/app_assets.
+> You must rename your main HTML file to entropylab.html before moving it into that folder.
+```
 
 ### 3. Minimal Package Fetching
 
