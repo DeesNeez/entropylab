@@ -8,6 +8,17 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const app = readFileSync(join(root, "src/js/app.js"), "utf8");
+const en = JSON.parse(readFileSync(join(root, "src/locales/en.json"), "utf8"));
+function specText(value) {
+  if (value == null || value === "") return "";
+  if (typeof value === "string") return value;
+  if (value && typeof value.key === "string") {
+    let text = en[value.key] || value.key;
+    if (value.vars) text = text.replace(/\{(\w+)\}/g, (_, n) => (value.vars[n] == null ? `{${n}}` : String(value.vars[n])));
+    return text;
+  }
+  return String(value);
+}
 
 function extract(startNeedle, endNeedle) {
   const start = app.indexOf(startNeedle);
@@ -66,7 +77,22 @@ function loadSlice(startNeedle, endNeedle, extra) {
 const originPath = loadSlice(
   "function hodlFilterXpub",
   "function hodlParseMultisigCosigner",
-  "const hodlMaxPurpose = 2147483647;\nconst hodlCoinTypeFromNetwork = (network) => network === 'mainnet' ? 0 : 1;\nexport { hodlFilterXpub, hodlNormalizeOriginPath, hodlParseKeyOrigin, hodlOriginPathIndexes, hodlOriginMatchesParsedKey, hodlMultisigPurposeIndex, hodlOriginScriptError, hodlMultisigAccountNumber, hodlSummarizeMultisigAccounts, hodlMultisigAccountWarning, hodlMultisigOriginScriptKind, hodlMultisigScriptEvidence, hodlSummarizeMultisigScriptKinds };",
+  `import { readFileSync } from "node:fs";
+const en = JSON.parse(readFileSync(${JSON.stringify(join(root, "src/locales/en.json"))}));
+function hodlT(key, vars) {
+  let text = en[key] || key;
+  if (vars) text = text.replace(/\\{(\\w+)\\}/g, (_, n) => (vars[n] == null ? "{" + n + "}" : String(vars[n])));
+  return text;
+}
+function hodlNote(key, vars) { return vars == null ? { key } : { key, vars }; }
+function hodlError(key, vars) {
+  const err = new Error(hodlT(key, vars));
+  err.hodlSpec = vars == null ? { key } : { key, vars };
+  return err;
+}
+const hodlMaxPurpose = 2147483647;
+const hodlCoinTypeFromNetwork = (network) => network === 'mainnet' ? 0 : 1;
+export { hodlFilterXpub, hodlNormalizeOriginPath, hodlParseKeyOrigin, hodlOriginPathIndexes, hodlOriginMatchesParsedKey, hodlMultisigPurposeIndex, hodlOriginScriptError, hodlMultisigAccountNumber, hodlSummarizeMultisigAccounts, hodlMultisigAccountWarning, hodlMultisigOriginScriptKind, hodlMultisigScriptEvidence, hodlSummarizeMultisigScriptKinds };`,
 );
 const {
   hodlFilterXpub,
@@ -160,17 +186,17 @@ test("origin path must match key depth and script", () => {
   const origin = { fingerprint: "73c5da0a", path: "48h/1h/0h/2h" };
   const mock = { depth: 4, childNumber: 0x80000002 };
   assert.equal(hodlOriginMatchesParsedKey(origin, mock), "");
-  assert.match(hodlOriginMatchesParsedKey({ fingerprint: "73c5da0a", path: "48h/1h/0h" }, mock), /steps/);
+  assert.match(specText(hodlOriginMatchesParsedKey({ fingerprint: "73c5da0a", path: "48h/1h/0h" }, mock)), /steps/);
   assert.equal(hodlOriginScriptError(origin, "p2wsh", "testnet", 48), "");
   assert.equal(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "48h/0h/0h/2h" }, "p2wsh", "mainnet", 48), "");
-  assert.match(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "48h/0h/0h/2h" }, "p2wsh", "testnet", 48), /1h/);
+  assert.match(specText(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "48h/0h/0h/2h" }, "p2wsh", "testnet", 48)), /1h/);
   assert.equal(hodlOriginMatchesParsedKey({ fingerprint: "73c5da0a", path: "45h" }, { depth: 1, childNumber: 0x8000002d }), "");
   assert.equal(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "45h" }, "p2sh", "mainnet", 45), "");
-  assert.match(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "45h/0" }, "p2sh", "mainnet", 45), /without an account/);
+  assert.match(specText(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "45h/0" }, "p2sh", "mainnet", 45)), /without an account/);
   const bip87 = { fingerprint: "73c5da0a", path: "87h/0h/7h" };
   assert.equal(hodlOriginMatchesParsedKey(bip87, { depth: 3, childNumber: 0x80000007 }), "");
   assert.match(
-    hodlOriginScriptError({ fingerprint: "73c5da0a", path: "45h" }, "p2sh", "mainnet", 87),
+    specText(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "45h" }, "p2sh", "mainnet", 87)),
     /87h/,
   );
   assert.equal(hodlOriginScriptError({ fingerprint: "73c5da0a", path: "86h/0h/0h" }, "p2tr", "mainnet", 86), "");
@@ -192,7 +218,7 @@ test("multisig account is derived from BIP48 and BIP87 origins", () => {
     () => hodlMultisigAccountNumber({ path: "48h/0h/7/2h" }, "p2wsh", 48),
     /must be hardened/,
   );
-  assert.match(hodlOriginScriptError({ path: "48h/0h/7/2h" }, "p2wsh", "mainnet", 48), /must be hardened/);
+  assert.match(specText(hodlOriginScriptError({ path: "48h/0h/7/2h" }, "p2wsh", "mainnet", 48)), /must be hardened/);
 });
 
 test("multisig account summary reports mismatched accounts as mixed", () => {
@@ -202,7 +228,7 @@ test("multisig account summary reports mismatched accounts as mixed", () => {
 
   const mixed = hodlSummarizeMultisigAccounts([7, 2, 7, 4]);
   assert.deepEqual(mixed, { account: null, accounts: [2, 4, 7], consistent: false, mixed: true });
-  assert.match(hodlMultisigAccountWarning(mixed), /do not match \(2, 4, 7\).*shown as Mixed/);
+  assert.match(specText(hodlMultisigAccountWarning(mixed)), /do not match \(2, 4, 7\).*shown as Mixed/);
 });
 
 test("multisig script type is inferred from SLIP-132 prefixes and key origins", () => {

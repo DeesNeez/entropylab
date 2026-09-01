@@ -165,7 +165,7 @@ test("more keys than the quorum supports are refused", () => {
 
 test("both markups ship the Paste descriptor panel and the app wires it", () => {
   for (const markup of [page, app]) {
-    assert.ok(markup.includes('<summary>Paste descriptor</summary>'), "expandable summary");
+    assert.match(markup, /<summary[^>]*>Paste descriptor<\/summary>/, "expandable summary");
     assert.ok(markup.includes('id="msig-descriptor"'), "descriptor textarea");
     assert.ok(markup.includes('id="msig-descriptor-import"'), "import button");
     assert.ok(markup.includes('id="msig-descriptor-status"'), "status line");
