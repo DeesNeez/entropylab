@@ -23,7 +23,7 @@ import { parseRawTx, extractEcdsaSignatures, inscriptionHints, isPsbtMagic, seri
 import { wasmExports as hodlWasm, withInput as hodlWasmIn, withOutput as hodlWasmOut } from "./entropylab-wasm.js";
 import { indexHdKey, indexSingleKey, matchOwnership, pathLabel } from "./ownership.js";
 import { hex as hodlHex } from "./coders.js";
-import { addressFor, addressFromScript, multisigScript, multisigTrScript, p2shP2wpkhScript, p2shScript, p2trKeyScript, p2trLeafScript, p2wshScript } from "./addresses.js";
+import { addressFor, addressFromScript, descriptorDerive, p2shP2wpkhScript, p2shScript, p2trKeyScript, p2wshScript } from "./addresses.js";
 import { base58checkDecode, base58checkEncode } from "./base58.js";
 import { HDKey as hodlHDKey } from "./hdkey.js";
 import { entropyToMnemonic as hodlEntropyToMnemonic, mnemonicToEntropy as hodlMnemonicToEntropy, mnemonicToSeedSync as hodlMnemonicToSeed, validateMnemonic as hodlIsValidMnemonic } from "./bip39.js";
@@ -635,7 +635,7 @@ hodlRootEl.innerHTML = `
       <div class="tool-intro" id="msig-tool-intro" hidden>
         <div class="kicker">Multiple keys, one wallet</div>
         <h2>Derive a multisig wallet</h2>
-        <p class="muted msig-intro">Combine extended public keys into a multisignature wallet. Paste each key origin and extended public key as exported by its signer: <span class="mono">[fingerprint/48h/0h/0h/2h]xpub\u2026</span>. Private keys are not needed. The derived addresses can receive bitcoin, and spending requires the configured number of signatures.</p>
+        <p class="muted msig-intro">Combine extended public keys into a multisignature wallet. Paste each key origin and extended public key as exported by its signer: <span class="mono">[fingerprint/48h/0h/0h/2h]xpub\u2026</span>. A trailing branch step such as <span class="mono">/0/*</span> is accepted and ignored — the receive/change branches and address indexes are derived for you. A longer trailing path such as <span class="mono">/0/20</span> or <span class="mono">/0/0/20/*</span> is honored as descriptor key derivation in full: the co-signer's public keys derive through it, and the exported descriptor carries it before the branch step. Private keys are not needed. The derived addresses can receive bitcoin, and spending requires the configured number of signatures.</p>
       </div>
       <section class="key-manager no-print" id="msig-manager" hidden>
       <div class="key-tab-strip"><div class="key-tabs" id="msig-tabs" role="tablist" aria-label="Multisigs"></div><div class="add-item-control"><button class="add-key" id="add-msig" type="button" aria-label="Open MS Station to derive another multisig" aria-describedby="add-msig-tooltip">+</button><span class="add-item-tooltip" id="add-msig-tooltip" role="tooltip">Open MS Station</span></div><div class="add-item-control"><button class="add-key remove-key" id="delete-msig" type="button" aria-label="Delete current multisig" aria-describedby="delete-msig-tooltip" disabled>−</button><span class="add-item-tooltip" id="delete-msig-tooltip" role="tooltip">Delete this multisig</span></div></div>
@@ -6429,7 +6429,11 @@ function hodlAssertPrivateKeyKind(value, network, kind, trimBrainWallet = false)
   return candidate;
 }
 function hodlFilterXpub(e) {
-  return String(e ?? "").replace(/[^A-Za-z0-9[\]/']/g, "");
+  // < > ; are kept so a pasted multipath step (<0;1>) reaches the parser
+  // intact — stripping them would mangle /<0;1> into /01, and with trailing
+  // paths honored the mangled digits would silently derive through a
+  // made-up numeric path instead of reading as the branch position.
+  return String(e ?? "").replace(/[^A-Za-z0-9[\]/'*<>;]/g, "");
 }
 function hodlNormalizeOriginPath(path) {
   return String(path ?? "").trim().replace(/^m\//i, "").replace(/'/g, "h").replace(/H/g, "h");
@@ -6438,11 +6442,40 @@ function hodlParseKeyOrigin(raw) {
   let input = String(raw ?? "").trim();
   let match = input.match(/^\[([0-9a-fA-F]{8})\/([0-9A-Za-z/']+)\](.+)$/);
   if (!match) return { origin: null, key: input };
-  let fingerprint = match[1].toLowerCase(), path = hodlNormalizeOriginPath(match[2]), rest = String(match[3] || "").trim().replace(/\/(?:<\d+(?:;\d+)*>|\d+)\/\*$/, "");
-  // A trailing path after the extended key (xpub…/1) is descriptor key
-  // derivation: the co-signer's public keys are derived through it, so one
-  // account key can serve again under a different path.
-  let suffix = rest.match(/^(.*?)((?:\/\d+[hH']?)+)$/), key = suffix ? suffix[1] : rest, derivationPath = suffix ? hodlNormalizeOriginPath(suffix[2]).replace(/^\//, "") : "";
+  let fingerprint = match[1].toLowerCase(), path = hodlNormalizeOriginPath(match[2]), rest = String(match[3] || "").trim().replace(/\/+$/, "");
+  // The extended key carries no "/", so the first slash splits the key from
+  // a trailing descriptor key-expression path. The path is honored in full:
+  // the co-signer's public keys derive through it, so one account key can
+  // serve again under a different path, and a deep signer export keeps every
+  // step — xpub…/0/0/20/* exports as xpub…/0/0/20/<0;1>/* (a multipath step
+  // is legal at any position, BIP389). The only decoration is the branch
+  // marker itself: a sole numeric step ahead of the wildcard (/0/*), the
+  // multipath form (/<0;1>/*), and the BIP45 cosigner step.
+  let slash = rest.indexOf("/"), key = slash < 0 ? rest : rest.slice(0, slash);
+  let tokens = slash < 0 ? [] : rest.slice(slash + 1).split("/").filter((token) => token !== "");
+  for (let token of tokens) {
+    if (!/^(?:\*|<\d+(?:;\d+)*>|\d+[hH']?)$/.test(token)) throw new Error("Trailing path steps must be numbers, a wildcard *, or a multipath step like <0;1>.");
+  }
+  if (tokens.includes("*") && tokens[tokens.length - 1] !== "*") throw new Error("A wildcard * is only allowed as the last trailing path step.");
+  let hadWildcard = tokens[tokens.length - 1] === "*";
+  if (hadWildcard) tokens.pop();
+  // BIP45 account keys carry their cosigner branch (always 0 here) as the
+  // first trailing step; the descriptor compose re-adds it, so it is
+  // decoration like the branch marker.
+  if (/^45h?$/.test(path.split("/")[0] || "") && tokens.length && /^\d+[hH']?$/.test(tokens[0])) tokens.shift();
+  if (tokens.filter((token) => token.startsWith("<")).length > 1) throw new Error("Only one multipath step like <0;1> is supported in a trailing path.");
+  let multipathAt = tokens.findIndex((token) => token.startsWith("<"));
+  if (multipathAt > 0 && tokens.slice(0, multipathAt).some((token) => !/^\d+[hH']?$/.test(token))) throw new Error("A multipath step like <0;1> must follow plain number steps.");
+  if (multipathAt >= 0 && multipathAt !== tokens.length - 1) throw new Error("A multipath step like <0;1> must be the last trailing path step.");
+  // Steps ahead of a multipath step are honored; the multipath step itself
+  // is the branch position. Without one, a sole step ahead of the wildcard
+  // is the branch marker and every other shape is honored as written.
+  let honoredTokens = multipathAt >= 0 ? tokens.slice(0, multipathAt) : hadWildcard && tokens.length === 1 ? [] : tokens;
+  let derivationPath = honoredTokens.map((token) => {
+    let step = token.match(/^(\d+)([hH']?)$/); // shape guaranteed by the validation above
+    let index = Number(step[1]);
+    return (Number.isSafeInteger(index) ? String(index) : step[1]) + (step[2] ? "h" : "");
+  }).join("/");
   if (fingerprint === "00000000") throw new Error("Key origin fingerprint 00000000 is not a real master fingerprint.");
   if (!/^(?:\d+h?)(?:\/\d+h?)*$/.test(path)) throw new Error("Key origin path must look like 48h/0h/0h/2h.");
   if (!key) throw new Error("Key origin is missing the extended public key.");
@@ -6496,6 +6529,9 @@ function hodlStandardMsigPurpose(kind = hodlScriptKind()) {
   if (kind === "p2sh") return 45;
   return 48;
 }
+function hodlMultisigScriptLabel(kind) {
+  return kind === "p2sh" ? "Legacy" : kind === "p2sh-p2wsh" ? "Nested SegWit" : kind === "p2wsh" ? "Native SegWit" : kind === "p2tr" ? "Taproot" : "Unknown"
+}
 function hodlOriginScriptError(origin, kind, network, purpose, coinType = hodlCoinTypeFromNetwork(network), hardening = { purpose: true, coinType: true, account: true, address: false }) {
   let steps = hodlNormalizeOriginPath(origin.path).split("/");
   let expectedPurpose = `${purpose}${hardening.purpose ? "h" : ""}`;
@@ -6506,6 +6542,18 @@ function hodlOriginScriptError(origin, kind, network, purpose, coinType = hodlCo
     if (steps.length !== 3) return `${purpose === 87 ? "A BIP87" : "A Taproot"} origin must contain purpose, coin type, and account.`;
     if (!new RegExp(`^\\d+${hardening.account ? "h" : ""}$`).test(steps[2])) return `The account index must be ${hardening.account ? "hardened" : "unhardened"}.`;
     return ""
+  }
+  // BIP44/49/84 account keys double as co-signers in their script type's
+  // multisig standard: the purpose determines the script type. The 4-step
+  // BIP48-style form keeps working and falls through to the checks below.
+  if ((purpose === 44 || purpose === 49 || purpose === 84) && steps.length !== 4) {
+    let mapped = purpose === 44 ? "p2sh" : purpose === 49 ? "p2sh-p2wsh" : "p2wsh";
+    if (kind !== mapped) return `A BIP${purpose} origin belongs to ${hodlMultisigScriptLabel(mapped)} multisig; the selected script type is ${hodlMultisigScriptLabel(kind)}.`;
+    let coin = `${coinType}${hardening.coinType ? "h" : ""}`;
+    if (steps[1] !== coin) return `This key origin should use ${coin} as the selected coin type.`;
+    if (steps.length !== 3) return `A BIP${purpose} origin must contain purpose, coin type, and account.`;
+    if (!new RegExp(`^\\d+${hardening.account ? "h" : ""}$`).test(steps[2])) return `The account index must be ${hardening.account ? "hardened" : "unhardened"}.`;
+    return "";
   }
   if (kind === "p2wsh" || kind === "p2sh-p2wsh") {
     let coin = `${coinType}${hardening.coinType ? "h" : ""}`;
@@ -6546,8 +6594,19 @@ function hodlMultisigAccountWarning(summary) {
 function hodlMultisigOriginScriptKind(origin) {
   let steps = hodlNormalizeOriginPath(origin?.path).split("/").filter(Boolean);
   if (steps.length === 1) return "p2sh";
-  if (steps[0].replace(/h$/, "") === "86" && steps.length === 3) return "p2tr";
-  if (steps[0].replace(/h$/, "") !== "48" || steps.length !== 4) return null;
+  let purpose = steps[0].replace(/h$/, "");
+  // Three-step account origins determine the script type from the purpose:
+  // the singlesig BIPs map to their multisig counterpart, 86 is Taproot,
+  // 87 is deliberately script-agnostic, and anything else is a custom
+  // purpose that selects no script type.
+  if (steps.length === 3) {
+    if (purpose === "86") return "p2tr";
+    if (purpose === "84") return "p2wsh";
+    if (purpose === "49") return "p2sh-p2wsh";
+    if (purpose === "44") return "p2sh";
+    return null;
+  }
+  if (purpose !== "48" || steps.length !== 4) return null;
   if (steps[3] === "1h") return "p2sh-p2wsh";
   if (steps[3] === "2h") return "p2wsh";
   return null;
@@ -6587,9 +6646,6 @@ function hodlDetectMsigScriptSummary(values = hodlReadMsigXpubs()) {
     }
   }
   return hodlSummarizeMultisigScriptKinds(kinds);
-}
-function hodlMultisigScriptLabel(kind) {
-  return kind === "p2sh" ? "Legacy" : kind === "p2sh-p2wsh" ? "Nested SegWit" : kind === "p2wsh" ? "Native SegWit" : kind === "p2tr" ? "Taproot" : "Unknown"
 }
 function hodlSelectedLegacyMultisigStandard() {
   let purpose;
@@ -7348,14 +7404,17 @@ function hodlFillKeys(values) {
 }
 function hodlMultisigPrefixCompatible(parsed, kind, purpose) {
   if (kind === "p2tr" || purpose === 87) return parsed.family === "x";
+  // BIP44/49/84 co-signers are singlesig account keys: generic xpub/tpub.
+  if ((purpose === 44 || purpose === 49 || purpose === 84) && parsed.depth === 3) return parsed.family === "x";
   if (parsed.scope === "singlesig") return parsed.family === "x";
   if (kind === "p2sh-p2wsh") return parsed.family === "y";
   if (kind === "p2wsh") return parsed.family === "z";
   return false;
 }
 function hodlMultisigAccountKeyError(parsed, kind, purpose, hardening = { purpose: true, coinType: true, account: true, address: false }) {
-  if (kind === "p2tr" || purpose === 87) {
-    if (parsed.depth !== 3) return `${purpose === 87 ? "BIP87" : "Taproot"} requires a depth-3 account key at m/purposeh/coinh/accounth; this key is depth ${parsed.depth}.`;
+  if (kind === "p2tr" || purpose === 87 || ((purpose === 44 || purpose === 49 || purpose === 84) && parsed.depth === 3)) {
+    let standard = purpose === 87 ? "BIP87" : kind === "p2tr" ? "Taproot" : `BIP${purpose}`;
+    if (parsed.depth !== 3) return `${standard} requires a depth-3 account key at m/purposeh/coinh/accounth; this key is depth ${parsed.depth}.`;
     if ((parsed.childNumber >= 0x80000000) !== hardening.account) return `The account index must be ${hardening.account ? "hardened" : "unhardened"}.`;
     return ""
   }
@@ -7420,7 +7479,7 @@ function hodlCheckXpub(ta) {
     let scriptOriginError = hodlOriginScriptError(parsed.origin, kind, network, purpose, coinType, hardening);
     if (scriptOriginError) throw new Error(scriptOriginError);
     if (hodlDuplicateMultisigKey(ta, parsed)) throw new Error("This duplicates another co-signer. Append a derivation path (like /1) after the extended key so its public keys differ.");
-    hodlHint(ta, true, `${parsed.prefix} origin, checksum, and derivation path look valid`);
+    hodlHint(ta, true, parsed.derivationPath ? `${parsed.prefix} origin, checksum, and derivation path look valid · branches and indexes derive below the path /${parsed.derivationPath}` : `${parsed.prefix} origin, checksum, and derivation path look valid`);
   } catch (error) {
     hodlHint(ta, false, error.message || "Not a valid multisig extended public key");
   }
@@ -7528,11 +7587,6 @@ function hodlInitMsig() {
   hodlElement("#msig-go").onclick = () => hodlHandleDerivationButton("msig", hodlBuildMsig);
   hodlElement("#msig-wipe").onclick = hodlWipeActiveMsig;
 }
-function hodlCmpBytes(a, b) {
-  let n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return a.length - b.length;
-}
 function hodlScriptKind() {
   return document.getElementById("msig-script-type")?.value || "p2wsh";
 }
@@ -7546,29 +7600,18 @@ function hodlXOnlyPubkey(pubkey) {
   return pubkey.length === 33 ? pubkey.slice(1) : pubkey.slice(0, 32)
 }
 
+// Multisig scripts and addresses are evaluated by rust-miniscript in the
+// WASM crate: the keys become a descriptor (sortedmulti/multi, or
+// sortedmulti_a/multi_a under a BIP341 NUMS internal key for Taproot) and the
+// crate derives the output. Sorting is the descriptor's job, as BIP67 and
+// BIP386 intend — multi keeps the listed order, sortedmulti ignores it.
 function hodlMsigAddr(pubkeys, m, network, kind, sorted = !0) {
-  if (kind === "p2tr") {
-    let xonly = [...pubkeys].map(hodlXOnlyPubkey);
-    if (sorted) xonly.sort(hodlCmpBytes);
-    let script = multisigTrScript(m, xonly),
-      out = addressFromScript(p2trLeafScript(hodlTaprootNumsKey(), script), network);
-    if (!out) throw new Error("Failed to build Taproot multisig address");
-    return {
-      address: out,
-      scriptHex: hodlHex.encode(script),
-      kind
-    }
-  }
-  let keys = [...pubkeys];
-  if (sorted) keys.sort(hodlCmpBytes);
-  let ms = multisigScript(m, keys);
-  if (kind === "p2wsh") {
-    return { address: addressFromScript(p2wshScript(ms), network), scriptHex: hodlHex.encode(ms), kind };
-  }
-  if (kind === "p2sh-p2wsh") {
-    return { address: addressFromScript(p2shScript(p2wshScript(ms)), network), scriptHex: hodlHex.encode(ms), kind };
-  }
-  return { address: addressFromScript(p2shScript(ms), network), scriptHex: hodlHex.encode(ms), kind };
+  let op = kind === "p2tr" ? sorted ? "sortedmulti_a" : "multi_a" : sorted ? "sortedmulti" : "multi";
+  let inner = `${op}(${m},${pubkeys.map((key) => hodlHex.encode(kind === "p2tr" ? hodlXOnlyPubkey(key) : key)).join(",")})`;
+  let descriptor = kind === "p2tr" ? `tr(${hodlHex.encode(hodlTaprootNumsKey())},${inner})` : kind === "p2wsh" ? `wsh(${inner})` : kind === "p2sh-p2wsh" ? `sh(wsh(${inner}))` : `sh(${inner})`;
+  let derived = descriptorDerive(descriptor, 0, network);
+  if (!derived.address) throw new Error("Failed to build the multisig address");
+  return { address: derived.address, scriptHex: derived.scriptHex, kind };
 }
 function hodlValidatedMsigInputs() {
   let coinType = hodlReadCoinType(document.getElementById("msig-network")), network = hodlNetworkFromCoinType(coinType), addressWindow = hodlReadAddressWindow("msig-"), branchWindow = hodlReadBranchWindow("msig-"), count = addressWindow.range, addressStart = addressWindow.start, branchStart = branchWindow.start, branchRange = branchWindow.range, hardening = hodlReadHardening("msig-"), n = Number(document.getElementById("msig-n")?.value), m = Number(document.getElementById("msig-m")?.value);
@@ -7633,15 +7676,15 @@ async function hodlBuildMsig(progress) {
     for (let branch = branchStart; branch < branchStart + branchRange; branch++) {
       let suffix = bip45 ? `/0/${branch}/*` : `/${branch}/*`, path = bip45 ? `m/0/${branch}/` : `m/${branch}/`, inner = keyTokens.map(key => key + suffix).join(","), descriptor = hodlMsigInnerDescriptor(kind, m, inner, sorted), rows = [];
       for (let index = addressStart; index < addressStart + count; index++) {
-        let publicKeys = nodes.map((node) => {
-          let key = node.derive(path + index).publicKey;
-          if (!key) throw new Error("Could not derive a public key");
-          return key;
-        });
+        // The branch descriptor is the source of truth: rust-miniscript
+        // derives the address from it, so what is shown here cannot drift
+        // from the watch-only descriptor exported below.
+        let derived = descriptorDerive(descriptor, index, network), publicKeys = derived.pubkeys.map((key) => hodlHex.decode(key));
+        if (!derived.address) throw new Error("Could not derive a multisig address");
         // Final defense behind the co-signer identity check: never emit a
         // script whose public keys repeat, whatever the supplied encodings were.
         if (new Set(publicKeys.map(hodlHex.encode)).size !== publicKeys.length) throw new Error("Two co-signers derive the same public key. Every co-signer must use a distinct extended public key.");
-        rows.push(Object.assign({ index, branch, role: hodlAddressBranchRole(branch), path: path.slice(1) + index }, hodlMsigAddr(publicKeys, m, network, kind, sorted)));
+        rows.push(Object.assign({ index, branch, role: hodlAddressBranchRole(branch), path: path.slice(1) + index }, { address: derived.address, scriptHex: derived.scriptHex, kind }));
         let pause = progress.step();
         if (pause) await pause;
       }

@@ -106,6 +106,8 @@ test("filter keeps descriptor origin punctuation", () => {
   const raw = "[73c5da0a/48h/1h/0h/2h]tpubABC";
   assert.equal(hodlFilterXpub(raw), raw);
   assert.equal(hodlFilterXpub("[73c5da0a/48'/1'/0'/2']tpubABC"), "[73c5da0a/48'/1'/0'/2']tpubABC");
+  // A trailing wildcard survives the field filter so the parser can see it.
+  assert.equal(hodlFilterXpub(`${raw}/0/*`), `${raw}/0/*`);
 });
 
 test("origin parse normalizes apostrophes and strips /0/*", () => {
@@ -117,6 +119,34 @@ test("origin parse normalizes apostrophes and strips /0/*", () => {
   assert.equal(parsed.origin.path, "48h/1h/0h/2h");
   assert.match(parsed.key, /^tpubDFH9/);
   assert.equal(hodlParseKeyOrigin("tpubABC").origin, null);
+});
+
+test("origin parse tolerates branch wildcards and lone trailing slashes as decoration", () => {
+  const body = "[73c5da0a/48h/1h/0h/2h]tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ";
+  const bare = hodlParseKeyOrigin(body);
+  for (const suffix of ["/0/*", "/<0;1>/*", "/", "/0/*/"]) {
+    const parsed = hodlParseKeyOrigin(body + suffix);
+    assert.equal(parsed.key, bare.key, `suffix ${suffix} was not fully stripped`);
+    assert.deepEqual(parsed.origin, bare.origin, `suffix ${suffix} changed the origin`);
+    assert.equal(parsed.derivationPath, "", `suffix ${suffix} must not become a derivation path`);
+  }
+});
+
+test("origin parse honors a trailing numeric path, with or without decoration", () => {
+  const body = "[73c5da0a/48h/1h/0h/2h]tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ";
+  assert.equal(hodlParseKeyOrigin(body + "/0/1/0").derivationPath, "0/1/0");
+  // A trailing slash alone is decoration; the path ahead of it still applies.
+  assert.equal(hodlParseKeyOrigin(body + "/0/1/0/").derivationPath, "0/1/0");
+  // A sole step ahead of the wildcard is the branch marker; two or more
+  // steps are the signer's fixed path and are preserved in full.
+  assert.equal(hodlParseKeyOrigin(body + "/1/0/*").derivationPath, "1/0");
+  assert.equal(hodlParseKeyOrigin(body + "/0/0/20/*").derivationPath, "0/0/20");
+  assert.equal(hodlParseKeyOrigin(body + "/0/0/20/<0;1>/*").derivationPath, "0/0/20");
+  // Malformed shapes fail loudly instead of being mangled.
+  assert.throws(() => hodlParseKeyOrigin(body + "/0/*/1"), /wildcard/);
+  assert.throws(() => hodlParseKeyOrigin(body + "/0/foo/1"), /Trailing path steps/);
+  assert.throws(() => hodlParseKeyOrigin(body + "/0/1/<0;1>/<2;3>"), /Only one multipath/);
+  assert.throws(() => hodlParseKeyOrigin(body + "/0/<0;1>/2"), /must be the last trailing path step/);
 });
 
 test("placeholder fingerprint 00000000 is rejected", () => {
@@ -184,7 +214,13 @@ test("multisig script type is inferred from SLIP-132 prefixes and key origins", 
   assert.equal(hodlMultisigOriginScriptKind({ path: "48h/0h/0h/2h" }), "p2wsh");
   assert.equal(hodlMultisigOriginScriptKind({ path: "86h/0h/0h" }), "p2tr");
   assert.equal(hodlMultisigOriginScriptKind({ path: "48h/0h/0h/3h" }), null);
-  assert.equal(hodlMultisigOriginScriptKind({ path: "84h/0h/0h" }), null);
+  // The singlesig BIPs map to their multisig script type at account depth;
+  // an unrecognized purpose selects nothing and stays custom.
+  assert.equal(hodlMultisigOriginScriptKind({ path: "84h/0h/0h" }), "p2wsh");
+  assert.equal(hodlMultisigOriginScriptKind({ path: "49h/0h/0h" }), "p2sh-p2wsh");
+  assert.equal(hodlMultisigOriginScriptKind({ path: "44h/0h/0h" }), "p2sh");
+  assert.equal(hodlMultisigOriginScriptKind({ path: "84h/0h/0h/2h" }), null);
+  assert.equal(hodlMultisigOriginScriptKind({ path: "69420h/0h/0h" }), null);
   assert.equal(hodlMultisigPurposeIndex({ path: "45h" }), 45);
   assert.equal(hodlMultisigPurposeIndex({ path: "69420h/0h/0h/2h" }), 69420);
   assert.equal(hodlMultisigPurposeIndex({ path: "48/0h/0h/2h" }), 48);
