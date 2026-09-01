@@ -673,7 +673,12 @@ test("key derivation shows the relevant paste-ready multisig co-signer exports",
   assert.match(app, /function hodlMsigInnerDescriptor\(kind,m,inner,sorted\)/);
   assert.match(app, /function hodlMsigPolicyOp\(kind,sorted\)/);
   assert.match(app, /kind==="p2tr"\?sorted\?"sortedmulti_a":"multi_a":sorted\?"sortedmulti":"multi"/);
-  assert.match(app, /hodlMsigAddr\(publicKeys,m,network,kind,sorted\)/);
+  // The branch descriptor is the source of truth: rust-miniscript (in the
+  // WASM crate) derives every multisig address from it via descriptorDerive,
+  // and the address-match look-ahead reuses the same engine through
+  // hodlMsigAddr's raw-key descriptor.
+  assert.match(app, /descriptorDerive\(descriptor,index,network\)/);
+  assert.match(app, /hodlMsigAddr\(keys,re\.m,re\.network,re\.script,re\.sorted!==!1\)/);
   assert.match(app, /function hodlTaprootNumsKey\(\)/);
   assert.match(app, /function hodlXOnlyPubkey\(pubkey\)/);
 });
@@ -741,7 +746,10 @@ test("multisig separates script type from purpose and keeps the Legacy BIP87 sho
 });
 
 test("Native SegWit multisig uses the imported Bitcoin address encoder", () => {
-  assert.match(appSource, /addressFromScript\(p2wshScript\(ms\), network\)/);
+  // hodlMsigAddr turns the keys into a wsh(sortedmulti(...)) descriptor and
+  // the WASM crate (rust-miniscript) renders the address from it.
+  assert.match(appSource, /`wsh\(\$\{inner\}\)`/);
+  assert.match(appSource, /descriptorDerive\(descriptor, 0, network\)/);
   assert.doesNotMatch(appSource, /\bor\(net\)\.encode/);
 });
 
