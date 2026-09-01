@@ -853,7 +853,7 @@
       dispatchEvent(new Event("resize"));
     }
   });
-  await test("Station icons preserve the original SP mark and normalize the MS key cluster", async () => {
+  await test("Station icons preserve their intended responsive footprints", async () => {
     const stations = [
       ["calc", "#key-tab-lab .bench-tab-icon", 18, 18],
       ["bip85", "#bip85-tab-lab .bench-tab-icon", 18, 18],
@@ -870,11 +870,6 @@
       const box = icon.getBoundingClientRect();
       assert(Math.abs(box.height - expectedHeight) < 0.5, `${workspace} Station icon has the wrong decorative height`);
       assert(Math.abs(box.width - expectedWidth) < 0.5, `${workspace} Station icon has the wrong optical width`);
-      const core = icon.querySelector('[data-part="key-cluster"], [data-part="coin-core"]');
-      if (core) {
-        const coreBox = core.getBoundingClientRect();
-        assert(Math.abs(Math.max(coreBox.width, coreBox.height) - 18) < 0.75, `${workspace} Station core is not normalized to 18px`);
-      }
       if (!stationColor) stationColor = getComputedStyle(icon).color;
       else equal(getComputedStyle(icon).color, stationColor);
     }

@@ -815,6 +815,7 @@ test("Station icons keep the original SP mark while normalizing the MS key clust
   assert.match(css, /\.multisig-tab-icon\.bench-tab-icon \{ flex-basis: 21px; width: 21px; height: 24px; \}/);
   assert.match(appSource, /svg\.setAttribute\("viewBox", monochrome \? "0 0 21 24" : "0 -4 49 40"\)/);
   assert.match(appSource, /keys\.setAttribute\("data-part", "key-cluster"\)/);
+  assert.match(appSource, /if \(monochrome\) assembly\.setAttribute\("transform", "translate\(-1\.8 4\.65\) scale\(\.431\)"\)/);
   assert.match(appSource, /svg\.setAttribute\("viewBox", "0 0 24 24"\)/);
   assert.doesNotMatch(appSource, /coinCore/);
   for (const factory of ["hodlCreateLabIcon", "hodlCreateBip85BenchIcon", "hodlCreateMsigIcon", "hodlCreateSilentPaymentsIcon"]) {
