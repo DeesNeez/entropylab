@@ -69,7 +69,8 @@ docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh
     chromium \
     font-dejavu \
     mesa-dri-gallium \
-    wayland-protocols
+    wayland-protocols \
+    udev
 "
 ```
 
@@ -108,7 +109,38 @@ docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh
 "
 ```
 
-**4.3 Assets & Service Config**
+**4.3 USB Mount Logic**
+This enables the user to save files (like `wallet.dat`) to an external USB drive.
+```zsh
+# Create the mount point
+mkdir -p ovl_root/mnt/usb
+
+# Create the udev rule to trigger the mount script upon USB insertion
+mkdir -p ovl_root/etc/udev/rules.d
+cat << 'EOF' > ovl_root/etc/udev/rules.d/99-usb-mount.rules
+ACTION=="add", SUBSYSTEM=="block", KERNEL=="sd[b-z][0-9]", RUN+="/etc/init.d/usb-mount start"
+EOF
+
+# Create the mount script to handle permissions for the entropylab user (UID 1000)
+mkdir -p ovl_root/etc/init.d
+cat << 'EOF' > ovl_root/etc/init.d/usb-mount
+#!/sbin/openrc-run
+start() {
+    # Identify the first available USB partition (e.g., sdb1, sdc1)
+    DEV=$(lsblk -no NAME | grep -E 'sd[b-z][0-9]' | head -n 1)
+    if [ -n "$DEV" ]; then
+        # Mount FAT32 drive with ownership assigned to the entropylab user (UID 1000)
+        mount -o uid=1000,gid=1000,umask=000 /dev/$DEV /mnt/usb
+    fi
+}
+stop() {
+    umount /mnt/usb
+}
+EOF
+chmod +x ovl_root/etc/init.d/usb-mount
+```
+
+**4.4 Assets & Service Config**
 ```zsh
 mkdir -p ovl_root/var/www/entropylab
 cp -R app_assets/* ovl_root/var/www/entropylab/
@@ -134,7 +166,7 @@ start() {
     chown -R entropylab:entropylab $XDG_RUNTIME_DIR
     chmod 0700 $XDG_RUNTIME_DIR
     
-    # Drop privileges to 'entropylab' user to activate Chromium Sandbox
+    # Launch Cage with Chromium (Kiosk mode disabled to allow file saving)
     su - entropylab -c "
       export XDG_RUNTIME_DIR=/tmp/runtime-root
       cage -d -- chromium-browser \
@@ -144,7 +176,7 @@ start() {
         --disable-extensions \
         --disable-component-update \
         --disable-notifications \
-        --kiosk \
+        --allow-file-access-from-files \
         --user-data-dir=/tmp/chrome \
         file:///var/www/entropylab/entropylab.html &
     "
@@ -155,7 +187,7 @@ chmod +x ovl_root/etc/init.d/entropylab
 ln -s /etc/init.d/entropylab ovl_root/etc/runlevels/default/entropylab
 ```
 
-**4.4 Finalize Overlay**
+**4.5 Finalize Overlay**
 ```zsh
 mkdir -p ovl_root/etc
 echo "entropylab" > ovl_root/etc/hostname
@@ -212,6 +244,7 @@ docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh
   cp -r cache/* /mnt/tmp/cache/ && \
   umount /mnt/tmp
 "
+echo "✅ Distributable image created: entropylab_rpi.img"
 ```
 *Note: If .img creation fails, ensure OrbStack is running with "Allow privileged containers" enabled in settings.*
 
