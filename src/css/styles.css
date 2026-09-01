@@ -199,10 +199,20 @@ textarea { display: block; min-height: 96px; letter-spacing: 0.08em; }
 .seed-autocomplete-note { color: var(--muted); font-weight: 400; }
 .seed-entry-tools { display: flex; align-items: stretch; gap: var(--space-control); margin-top: var(--space-component); }
 .seed-entry-tools .seed-autocomplete-toggle { flex: 1 1 auto; margin-top: 0; }
-.global-sync-host { margin-top: var(--space-component); }
+/* Tighter to the dropdown above than to the section below: the control reads
+   as part of the method it qualifies, and the 8px off the top is given back
+   under the explanation. */
+.global-sync-host { margin-top: var(--space-control); padding-bottom: var(--space-control); }
 .global-sync-host[hidden] { display: none; }
-.global-sync-row { display: flex; align-items: stretch; gap: var(--space-control); }
-.global-sync-toggle { flex: 1 1 auto; margin-top: 0; }
+/* Two rows: the switch and its title, then the explanation under both. The
+   shared toggle chrome is a bordered chip elsewhere; here the control reads as
+   part of the card, so it gives up the box and keeps the 44px target. */
+.global-sync-row { display: block; }
+.global-sync-head { display: flex; align-items: center; gap: var(--space-control); }
+.global-sync-toggle { flex: 1 1 auto; min-height: 32px; margin-top: 0; padding: 0; border: 0; background: none; }
+/* The title carries the same weight and colour as the Method label above it. */
+.global-sync-toggle .label { margin: 0; }
+.global-sync-note { display: block; margin: 0; font-size: 13px; line-height: 1.45; }
 .global-sync-status {
   display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto;
   color: var(--ok); font-size: 13px; font-weight: 600; white-space: nowrap;
@@ -1073,22 +1083,30 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 .segmented-control > .tab:focus-visible {
   z-index: 2; outline: 2px solid color-mix(in oklab, var(--selection-accent) 72%, var(--fg)); outline-offset: 2px;
 }
-.key-mode-control {
-  width: max-content; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
-  overscroll-behavior-inline: contain; scrollbar-width: none; -ms-overflow-style: none;
-  -webkit-overflow-scrolling: touch;
-}
-.key-mode-control::-webkit-scrollbar { display: none; width: 0; height: 0; }
-.key-mode-control > .tab {
-  --key-method-card-bg: var(--bg);
-  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-}
-.key-mode-control > .tab:is(.active, [aria-pressed="true"]),
-.key-mode-control > .tab:not(:disabled):active { --key-method-card-bg: var(--selection-accent); }
+/* The Cards mark's front face masks the rear one, so it has to carry whatever
+   surface it is drawn on: the closed control's ground, the list's, and the
+   tints the selected and hovered rows take. */
+.key-mode-select .custom-select-button { --key-method-card-bg: var(--bg); }
+.key-mode-select .custom-select-list { --key-method-card-bg: var(--surface-2); }
+.key-mode-select .custom-select-option:hover,
+.key-mode-select .custom-select-option:focus-visible { --key-method-card-bg: color-mix(in oklab, var(--accent) 14%, var(--surface-2)); }
+.key-mode-select .custom-select-option[aria-selected="true"] { --key-method-card-bg: color-mix(in oklab, var(--accent) 20%, var(--surface-2)); }
 .key-method-icon {
-  display: none; flex: 0 0 18px; width: 18px; height: 18px; color: currentColor;
+  display: inline-flex; flex: 0 0 18px; width: 18px; height: 18px; color: currentColor;
 }
 .key-method-icon svg { display: block; width: 100%; height: 100%; overflow: visible; }
+/* The method picker, in the Script type control's chrome that
+   enhanced-inputs.js builds: the mark sits ahead of the label in the button
+   and in every option. */
+.key-mode-select > .label { margin: 0 0 8px; }
+.key-mode-select .custom-select, .seed-length-select .custom-select { margin-top: 0; }
+/* Half the card, sharing the right edge with the Script type control below:
+   that field is one of two grid columns, so the gap comes off this width too.
+   Below the header breakpoint these go full width while that row is still two
+   columns, so they part company there. */
+.key-mode-select, .seed-length-select { width: calc(50% - var(--space-component) / 2); }
+.key-mode-select .custom-select-option { display: flex; align-items: center; gap: 8px; }
+.key-mode-select .custom-select-value { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .segmented-control.is-stacked { flex-direction: column; flex-wrap: nowrap; width: 100%; }
 .segmented-control.is-stacked > .tab { width: 100%; flex: 1 1 auto; }
 .segmented-control.is-stacked > .tab + .tab { margin-block-start: -1px; }
@@ -1272,7 +1290,6 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 .seed-length-control[hidden] { display: none !important; }
 .seed-length-control .label { margin: 0 0 8px; }
 .seed-length-control .muted { margin: var(--space-control) 0 0; }
-.seed-length-options { align-items: center; }
 .key-form { margin-top: var(--space-section); }
 .key-form > :first-child { margin-top: 0; }
 .key-form > .muted { margin: var(--space-control) 0 0; }
@@ -1729,6 +1746,9 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 @media (max-width: 719px) {
   :root { --site-header-pad: 12px; }
   .control-label { display: none; }
+  /* The Station's dropdowns take the whole card from the same width the bar's
+     controls collapse at, so the page changes shape in one step. */
+  .key-mode-select, .seed-length-select { width: 100%; }
   /* Icon-only in the row, square against the 40px theme toggle it sits
      beside: the picker keeps its place among the header controls rather than
      dropping out of the bar, and the coin's colour still carries the network.
@@ -1740,13 +1760,6 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
      fitting more of it on screen matters more than the fuller wording. */
   .workspace-tab-full { display: none; }
   .workspace-tab-short { display: inline; }
-  /* The five Key Station methods fit as accessible icon buttons at phone
-     widths. Keep them in the same left-to-right order instead of allowing the
-     generic segmented-control fallback to turn them into a tall stack. */
-  .key-mode-control { width: 100%; }
-  .key-mode-control > .tab { flex: 1 0 44px; min-width: 44px; min-height: 44px; padding: 0 10px; }
-  .key-mode-control .key-method-icon { display: inline-flex; }
-  .key-mode-control .key-mode-label { display: none; }
   /* Icon-only: square them off against the 40px theme toggle. */
   .download-controls .download-html { flex: 0 0 40px; width: 40px; padding: 0; justify-content: center; }
   /* The footer link loses its label with the rest, so it squares off against

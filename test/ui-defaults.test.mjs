@@ -344,6 +344,30 @@ test("Number bases offers exact Base 2, 4, 8, 16, Crockford Base32, and Base64-a
   assert.match(app, /entropyFormat:"bin"/);
   assert.ok(app.includes('function hodlNormalizeEntropyFormat(format){return Object.hasOwn(hodlEntropyFormats,String(format??""))?String(format):"bin"}'));
   assert.match(css, /\.global-sync-status \{[\s\S]*?color: var\(--ok\)/);
+  // The sync control stacks: switch and title on one row, explanation beneath.
+  assert.match(appSource, /<div class="global-sync-head">/);
+  assert.match(appSource, /<span class="label">Sync entropy across methods<\/span><\/label>/);
+  assert.match(appSource, /<p class="seed-autocomplete-note global-sync-note" id="global-sync-note">/);
+  // The explanation describes the switch instead of naming it.
+  assert.match(appSource, /id="global-entropy-sync" aria-describedby="global-sync-note"/);
+  assert.doesNotMatch(appSource, /<strong>Sync entropy across methods<\/strong>/);
+  assert.match(css, /\.global-sync-row \{ display: block; \}/);
+  assert.match(css, /\.global-sync-head \{ display: flex; align-items: center;/);
+  // It gives up the shared toggle's chip chrome, but not its 44px target, and
+  // the chip elsewhere keeps both.
+  // The chip's 44px box left 13px of its own height under the title; the row
+  // hugs its content instead, staying full width and above the 24px floor.
+  assert.match(css, /\.global-sync-toggle \{[^}]*min-height: 32px;[^}]*padding: 0; border: 0; background: none; \}/);
+  assert.match(css, /\.seed-autocomplete-toggle \{[^}]*min-height: 44px;[^}]*border: 1px solid var\(--border\);[^}]*background: var\(--surface-2\);/s);
+  // The title matches the Method label above it.
+  assert.match(css, /\.global-sync-toggle \.label \{ margin: 0; \}/);
+  // The explanation is subordinate to that title and sits directly under it.
+  assert.match(css, /\.global-sync-note \{ display: block; margin: 0; font-size: 13px; line-height: 1\.45; \}/);
+  // Whatever comes off the top is given back below, so the control sits with
+  // the method it qualifies rather than centred in its own gap. Padding, not
+  // margin: a bottom margin would collapse into .seed-length-control's larger
+  // top margin and buy nothing.
+  assert.match(css, /\.global-sync-host \{ margin-top: var\(--space-control\); padding-bottom: var\(--space-control\); \}/);
   assert.match(css, /\.number-base-calculation-list \{/);
   assert.match(app, /fields:\{[\s\S]*?base4:"",base8:"",base32:"",base64:""/);
   assert.match(app, /function hodlBase64KeyboardMarkup\(\)\{return hodlKeyboardMarkup\(!0,"Base64 entropy","base64-keyboard"\)\}/);
@@ -894,28 +918,47 @@ test("Station add controls stay pinned to the right of their tab strips", () => 
   assert.match(css, /\.add-item-control \{ position: relative; display: inline-flex; flex: 0 0 auto; \}/);
 });
 
-test("Key Station methods become one accessible icon row on narrow screens", () => {
+test("the Key Station method picker is one dropdown carrying every method's mark", () => {
   for (const markup of [template, appSource]) {
-    assert.match(markup, /class="row segmented-control key-mode-control" id="modes" role="group" aria-label="Key input mode"/);
+    // #modes hosts the title and the dropdown; the segmented row is gone.
+    assert.match(markup, /<div class="key-mode-select" id="modes"><p class="label" id="key-method-label">Method<\/p><\/div>/);
+    assert.doesNotMatch(markup, /key-mode-control|key-mode-label/);
   }
+  // The title is the control's accessible name, so speech input can say it.
+  assert.match(css, /\.key-mode-select > \.label \{ margin: 0 0 8px; \}/);
   assert.doesNotMatch(template, /Brain wallet — lab/);
   assert.match(appSource, /hodlKeyModeLabels = \{ dice: "Dice rolls", cards: "Cards", hex: "Number bases", seed: "Seed phrase", key: "Private key" \}/);
+  // The marks outlived the buttons: the dropdown shows them instead.
   assert.match(appSource, /function hodlCreateKeyMethodIcon\(mode\) \{/);
   for (const mode of ["dice", "cards", "hex", "seed"]) {
     assert.match(appSource, new RegExp(`mode === "${mode}"`), `${mode} icon branch is missing`);
   }
   assert.match(appSource, /else \{\s*add\("circle", \{ cx: "7\.5"/);
-  assert.match(appSource, /t\.dataset\.keyMode = e;/);
-  assert.match(appSource, /t\.setAttribute\("aria-label", hodlKeyModeLabels\[e\]\);/);
-  assert.match(appSource, /label\.className = "key-mode-label";/);
-  assert.match(appSource, /t\.append\(hodlCreateKeyMethodIcon\(e\), label\);/);
   assert.match(appSource, /fill: "var\(--key-method-card-bg\)", "data-part": "card-front"/);
-  assert.match(css, /\.key-mode-control \{[^}]*flex-wrap: nowrap;[^}]*overflow-x: auto;/s);
-  assert.match(css, /\.key-mode-control > \.tab \{\s*--key-method-card-bg: var\(--bg\);/);
-  assert.match(css, /\.key-mode-control > \.tab:is\(\.active, \[aria-pressed="true"\]\),[\s\S]*?--key-method-card-bg: var\(--selection-accent\);/);
-  assert.match(css, /@media \(max-width: 719px\) \{[\s\S]*?\.key-mode-control > \.tab \{ flex: 1 0 44px; min-width: 44px; min-height: 44px;/);
-  assert.match(css, /@media \(max-width: 719px\) \{[\s\S]*?\.key-mode-control \.key-method-icon \{ display: inline-flex; \}[\s\S]*?\.key-mode-control \.key-mode-label \{ display: none; \}/);
-  assert.match(appSource, /if \(group\.classList\.contains\("key-mode-control"\)\) return;/);
+  // A plain select that enhanced-inputs.js upgrades, so it is the Script type
+  // control's chrome rather than a second dropdown implementation.
+  assert.match(appSource, /hodlKeyModeSelectEl\.id = "key-mode-select";/);
+  assert.match(appSource, /hodlKeyModeSelectEl\.setAttribute\("aria-labelledby", "key-method-label"\);/);
+  assert.match(appSource, /hodlKeyModeSelectEl\.entropylabOptionIcon = \(value\) => hodlCreateKeyMethodIcon\(value\);/);
+  assert.match(appSource, /hodlModesEl\.appendChild\(hodlKeyModeSelectEl\);/);
+  // Every path that changes the method moves the control, and the sync cannot
+  // loop back through onchange.
+  assert.match(appSource, /function hodlSyncKeyModeSelect\(\) \{/);
+  assert.match(appSource, /hodlKeyModeSelectEl\.dispatchEvent\(new Event\("entropylab:sync-select"\)\);/);
+  assert.equal(appSource.match(/hodlSyncKeyModeSelect\(\);/g).length, 3, "every method update must move the dropdown");
+  // No button plumbing is left behind.
+  assert.doesNotMatch(appSource, /hodlModesEl\.children/);
+  assert.doesNotMatch(css, /\.key-mode-control/);
+  // Choosing a method invalidates the live result; opening the list does not.
+  assert.match(appSource, /closest\("#modes \.custom-select-option, #seed-length \.custom-select-option/);
+  // The mark rides ahead of the label in the button and in every option.
+  assert.match(css, /\.key-method-icon \{\s*display: inline-flex; flex: 0 0 18px;/);
+  assert.match(css, /\.key-mode-select \.custom-select-option \{ display: flex; align-items: center; gap: 8px; \}/);
+  assert.match(css, /\.key-mode-select \.custom-select-value \{ display: inline-flex; align-items: center; gap: 8px;/);
+  // The card mark masks against the row it sits on, selected or not.
+  assert.match(css, /\.key-mode-select \.custom-select-button \{ --key-method-card-bg: var\(--bg\); \}/);
+  assert.match(css, /\.key-mode-select \.custom-select-list \{ --key-method-card-bg: var\(--surface-2\); \}/);
+  assert.match(css, /\.key-mode-select \.custom-select-option\[aria-selected="true"\] \{ --key-method-card-bg:/);
 });
 
 test("Station icons keep the original SP mark while normalizing the MS key cluster", () => {
@@ -1400,11 +1443,25 @@ test("PSBT amounts and fees are labeled as unverified claims", () => {
   assert.doesNotMatch(app, /Fee \(from PSBT fields\)/);
 });
 
-test("seed-length selector offers all five BIP39 sizes", () => {
-  for (const words of [12, 15, 18, 21, 24]) {
-    assert.match(template, new RegExp(`data-seed-words="${words}"`), `${words} missing from src/index.html`);
-    assert.match(app, new RegExp(`data-seed-words="${words}"`), `${words} missing from runtime markup in src/js/app.js`);
+test("seed-length selector offers all five BIP39 sizes as a dropdown", () => {
+  for (const markup of [template, appSource]) {
+    // One dropdown in the Method control's clothes, not five buttons.
+    assert.match(markup, /<select id="seed-length-select" aria-labelledby="seed-length-label">/);
+    for (const words of [12, 15, 18, 21, 24]) {
+      assert.match(markup, new RegExp(`<option value="${words}"[^>]*>${words} words</option>`), `${words} is missing`);
+    }
+    assert.match(markup, /<option value="24" selected="selected">24 words<\/option>/);
+    assert.doesNotMatch(markup, /data-seed-words|seed-length-options/);
   }
+  assert.match(css, /\.key-mode-select \.custom-select, \.seed-length-select \.custom-select \{ margin-top: 0; \}/);
+  // Half the card until the header's breakpoint, then the whole of it.
+  assert.match(css, /\.key-mode-select, \.seed-length-select \{ width: calc\(50% - var\(--space-component\) \/ 2\); \}/);
+  assert.match(css, /@media \(max-width: 719px\) \{[\s\S]*?\.key-mode-select, \.seed-length-select \{ width: 100%; \}/);
+  assert.doesNotMatch(css, /\.seed-length-options/);
+  // One choice drives the same state the five buttons did, and the sync back
+  // cannot loop through onchange.
+  assert.match(appSource, /hodlSeedLengthSelectEl\.onchange = \(\) => hodlSetSeedLength\(Number\(hodlSeedLengthSelectEl\.value\)\);/);
+  assert.match(appSource, /hodlSeedLengthSelectEl\.dispatchEvent\(new Event\("entropylab:sync-select"\)\);/);
 });
 
 test("D++ uses the published hexadecimal D16 transcript without a notation toggle", () => {

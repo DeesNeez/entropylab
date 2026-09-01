@@ -95,7 +95,7 @@ class FakeMutationObserver {
   }
 }
 
-function makeHarness() {
+function makeHarness({ optionIcon } = {}) {
   const options = [
     { value: "mainnet", textContent: "Bitcoin mainnet", disabled: false, dataset: {} },
     { value: "testnet", textContent: "Testnet (practice)", disabled: false, dataset: {} },
@@ -117,6 +117,7 @@ function makeHarness() {
   };
   select.ownerDocument = document;
   body.ownerDocument = document;
+  if (optionIcon) select.entropylabOptionIcon = optionIcon;
   new Function("document", "Element", "MutationObserver", "Event", source)(document, FakeElement, FakeMutationObserver, FakeEvent);
   return { select, root: select.afterNode, document, body };
 }
@@ -240,4 +241,38 @@ test("clicking outside an open custom select closes it", () => {
   for (const listener of clicks) listener({ target: body });
   assert.equal(list.hidden, true, "a click outside closes the list");
   assert.equal(button.attributes.get("aria-expanded"), "false");
+});
+
+test("a select can put a mark ahead of every option label", () => {
+  const asked = [];
+  const { root } = makeHarness({
+    optionIcon: (value) => {
+      asked.push(value);
+      const mark = new FakeElement("span");
+      mark.className = `mark-${value}`;
+      return mark;
+    },
+  });
+  const label = root.children[0].children[0];
+  const list = root.children[1];
+  // The button shows the selected method's mark, then its name.
+  assert.equal(label.className, "custom-select-value");
+  assert.equal(label.children.length, 2, "the button label carries a mark and its text");
+  assert.equal(label.children[0].className, "mark-mainnet");
+  assert.equal(label.children[1].textContent, "Bitcoin mainnet");
+  // So does each option in the list.
+  assert.equal(list.children[0].children[0].className, "mark-mainnet");
+  assert.equal(list.children[0].children[1].textContent, "Bitcoin mainnet");
+  assert.equal(list.children[1].children[0].className, "mark-testnet");
+  assert.ok(asked.includes("mainnet") && asked.includes("testnet"), "every option is offered a mark");
+});
+
+test("a select without the hook keeps its plain option text", () => {
+  const { root } = makeHarness();
+  const label = root.children[0].children[0];
+  const list = root.children[1];
+  assert.equal(label.textContent, "Bitcoin mainnet", "the label stays bare text");
+  assert.equal(label.children.length, 0, "no wrapper is introduced without a mark");
+  assert.equal(list.children[0].textContent, "Bitcoin mainnet");
+  assert.equal(list.children[0].children.length, 0);
 });
