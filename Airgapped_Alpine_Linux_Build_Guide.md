@@ -1,15 +1,15 @@
 # 🛡️ Airgapped Alpine Linux Build Guide
 
-**Hardened, Diskless Kiosk for Raspberry Pi 4/5 (M-Series Mac Workflow)**
+**Hardened RAM-Only OS for Raspberry Pi 4/5**
 
-This guide provides a professional workflow for creating a bootable, air-gapped image that loads the `entropylab.html` application. This build is designed for maximum security, utilizing a "Diskless" (RAM-only) mode and strict privilege separation to ensure the browser is isolated from the system.
+This guide provides a professional workflow for creating a bootable, air-gapped image that loads the `entropylab.html` application. This build is optimized for creation on an M-Series Apple Mac.
 
 > [!CAUTION]
 > **Hardware Requirement:** This diskless build requires a Raspberry Pi 4 or 5 with **at least 2GB of RAM**. Because the entire operating system and package set are loaded into a RAM disk (`tmpfs`) during boot, 1GB models will likely encounter Out-of-Memory (OOM) errors and fail to boot.
 
 ## 🎯 Project Goal
 
-To create a "zero-trust" runtime environment where the attack surface is minimized. This build ensures that even if a vulnerability is found in the rendering engine, the attacker is trapped in a non-privileged user account with no network access.
+To create a "zero-trust" RAM-only runtime environment where the attack surface is minimized. This build ensures that even if a vulnerability is found in the rendering engine, the attacker is trapped in a non-privileged user account with no network access.
 
 ### The Hardening Strategy:
 
@@ -119,7 +119,7 @@ EOF
 chmod +x ovl_root/usr/local/bin/usb-mount.sh
 ```
 
-**4.3 Assets & Kiosk Service Config**
+**4.3 Assets & Service Config**
 Instead of using unsafe browser flags for local files, we serve them over a read-only local web server.
 
 ```zsh
@@ -132,7 +132,7 @@ chmod -R 755 ovl_root/var/www/entropylab
 mkdir -p ovl_root/etc/init.d
 cat << 'EOF' > ovl_root/etc/init.d/entropylab
 #!/sbin/openrc-run
-name="EntropyLab Kiosk"
+name="EntropyLab App"
 
 depend() {
     after localmount eudev
@@ -149,7 +149,7 @@ start_pre() {
 }
 
 start() {
-    ebegin "Starting Hardened EntropyLab Kiosk"
+    ebegin "Starting Hardened EntropyLab App"
     
     # Setup Wayland runtime dir
     export XDG_RUNTIME_DIR=/tmp/runtime-root
@@ -178,7 +178,7 @@ start() {
 }
 
 stop() {
-    ebegin "Stopping EntropyLab Kiosk"
+    ebegin "Stopping EntropyLab App"
     killall chromium-browser cage httpd
     eend $?
 }
@@ -192,7 +192,7 @@ chmod +x ovl_root/etc/init.d/entropylab
 mkdir -p ovl_root/etc/runlevels/{sysinit,default}
 echo "entropylab" > ovl_root/etc/hostname
 
-# Enable hotplugging daemon and our kiosk app at boot
+# Enable hotplugging daemon and EntropyLab App at boot
 ln -s /etc/init.d/udev ovl_root/etc/runlevels/sysinit/udev
 ln -s /etc/init.d/udev-trigger ovl_root/etc/runlevels/sysinit/udev-trigger
 ln -s /etc/init.d/entropylab ovl_root/etc/runlevels/default/entropylab
