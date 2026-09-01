@@ -2051,6 +2051,41 @@
     await until(() => !document.getElementById("calc-card").hidden, "key workspace");
   });
 
+  await test("multisig Edit input restores the wallet's pasted keys and settings in the lab", async () => {
+    // Fixed public test vector: seed 0x01…01 at m/48'/0'/0'/2'. Nothing secret.
+    const decorated = "[932f8b09/48h/0h/0h/2h]xpub6ESghgmLD5FuqvXEbeiDS5WDT7nrbkcQHVGCcatqeMSqgeH7MjExsH6wnbgo5DU8bUUGGhQf9D8DwjHRBaGTq2VzbzHsQZMWPdcETmmbLAr/0/*";
+    document.querySelector('#workspace [data-workspace="msig"]').click();
+    await until(() => !document.getElementById("msig-card").hidden, "multisig workspace");
+    [...document.querySelectorAll("#msig-tabs button")].find((button) => button.id === "msig-tab-lab").click();
+    const wipe = document.getElementById("msig-wipe");
+    if (!wipe.disabled) wipe.click();
+    const script = document.getElementById("msig-script-type");
+    script.value = "p2wsh";
+    script.dispatchEvent(new Event("change", { bubbles: true }));
+    input(document.getElementById("msig-network"), "0");
+    input(document.getElementById("msig-n-number"), "1");
+    input(document.getElementById("msig-x-0"), decorated);
+    const walletTabs = () => [...document.querySelectorAll("#msig-tabs button")].filter((button) => button.id !== "msig-tab-lab");
+    const committedBefore = walletTabs().length;
+    const go = await until(() => !document.getElementById("msig-go").disabled && document.getElementById("msig-go"), "decorated-paste multisig derive button");
+    go.click();
+    await until(() => document.querySelector("#msig-out .account-result-card") || document.getElementById("msig-error").textContent, "decorated-paste multisig result");
+    assert(!document.getElementById("msig-error").textContent, `Decorated-paste multisig derivation failed: ${document.getElementById("msig-error").textContent}`);
+    assert(document.getElementById("msig-lab").hidden, "Deriving a multisig did not switch to the result view");
+    equal(walletTabs().length, committedBefore + 1, "Deriving did not commit exactly one new wallet tab");
+    document.getElementById("msig-edit-inputs").click();
+    await until(() => !document.getElementById("msig-lab").hidden && document.getElementById("msig-x-0")?.value, "lab restored with the wallet's inputs");
+    equal(document.getElementById("msig-x-0").value, decorated, "Edit input did not restore the exact co-signer paste, descriptor-path suffix included");
+    equal(document.getElementById("msig-n").value, "1", "Edit input did not restore the key count");
+    equal(document.getElementById("msig-m").value, "1", "Edit input did not restore the threshold");
+    // The committed wallet keeps its result while its inputs sit in the lab.
+    walletTabs().at(-1).click();
+    await until(() => document.querySelector("#msig-out .account-result-card"), "wallet result after editing its inputs");
+    assert(document.getElementById("msig-lab").hidden, "Selecting the wallet did not return to its result view");
+    document.querySelector('#workspace [data-workspace="calc"]').click();
+    await until(() => !document.getElementById("calc-card").hidden, "key workspace");
+  });
+
   await test("watch-only export omits private recovery material", async () => {
     state.lastBlob = null;
     state.downloadName = "";
