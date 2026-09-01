@@ -29,6 +29,7 @@
     button.setAttribute("aria-haspopup", "listbox");
     button.setAttribute("aria-expanded", "false");
     const label = document.createElement("span");
+    label.className = "custom-select-value";
     const chevron = document.createElement("span");
     chevron.className = "custom-select-chevron";
     chevron.setAttribute("aria-hidden", "true");
@@ -42,9 +43,24 @@
     select.after(root);
     roots.add(root);
 
+    // A select may hand the list an icon for each value: the option keeps its
+    // plain text for the native control and assistive tech, and the custom
+    // rendering puts the mark in front of it.
+    const iconFor = (option) =>
+      (typeof select.entropylabOptionIcon === "function" && option ? select.entropylabOptionIcon(option.value) : null);
+    // Only the icon path wraps the text, so a plain select keeps the bare
+    // textContent it has always carried.
+    const textSpan = (text) => {
+      const span = document.createElement("span");
+      span.textContent = text;
+      return span;
+    };
+
     const sync = () => {
       const selected = select.options[select.selectedIndex] || select.options[0];
-      label.textContent = selected?.textContent || "Select";
+      const selectedIcon = iconFor(selected);
+      if (selectedIcon) label.replaceChildren(selectedIcon, textSpan(selected?.textContent || "Select"));
+      else label.textContent = selected?.textContent || "Select";
       const visibleOptions = [...select.options].filter((option) => option.dataset.customSelectPlaceholder !== "true");
       list.replaceChildren(...visibleOptions.map((option) => {
         const item = document.createElement("button");
@@ -53,7 +69,9 @@
         item.setAttribute("role", "option");
         item.setAttribute("aria-selected", String(option.value === select.value));
         item.disabled = option.disabled;
-        item.textContent = option.textContent;
+        const optionIcon = iconFor(option);
+        if (optionIcon) item.replaceChildren(optionIcon, textSpan(option.textContent));
+        else item.textContent = option.textContent;
         item.onclick = (event) => {
           event.preventDefault();
           event.stopPropagation();

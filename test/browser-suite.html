@@ -4,6 +4,12 @@
   const state = window.__entropyLabTest;
   const crypto = window.__entropyLabCrypto;
   const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+  // Seed length is a dropdown now, so drive it the way a choice does.
+  const chooseSeedWords = (words) => {
+    const select = document.getElementById("seed-length-select");
+    select.value = String(words);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  };
   const until = async (predicate, description, timeout = 15000) => {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
@@ -504,7 +510,7 @@
   });
 
   await test("all six number bases preserve the same exact entropy", async () => {
-    document.querySelector('[data-seed-words="12"]').click();
+    chooseSeedWords(12);
     await chooseMode("Number bases");
     const cases = [
       ["bin", 128, "0"],
@@ -547,7 +553,7 @@
     input(base32, `o${"0".repeat(27)}`);
     await wait(0);
     assert(base32.value.startsWith("0") && !document.getElementById("go").disabled, "Crockford O alias did not normalize to 0");
-    document.querySelector('[data-seed-words="24"]').click();
+    chooseSeedWords(24);
     const base32For24 = await until(() => document.getElementById("base32"), "24-word Base32 input");
     input(base32For24, "0".repeat(51));
     assert(document.getElementById("entropy-meta").textContent.includes("coin flip 1 of 1 · Heads (0) or Tails (1)"), "Base32 progress did not switch to coin-flip guidance");
@@ -572,7 +578,7 @@
   });
 
   await test("global entropy sync follows partial direct input and supports one-way hashed input", async () => {
-    document.querySelector('[data-seed-words="12"]').click();
+    chooseSeedWords(12);
     await chooseMode("Number bases");
     document.querySelector('input[name="entropy-format"][value="bin"]').click();
     const binary = await until(() => document.getElementById("bin"), "global-sync binary input");
@@ -677,7 +683,7 @@
   });
 
   await test("Base64 uses the shared case, number, and symbol keyboard", async () => {
-    document.querySelector('[data-seed-words="24"]').click();
+    chooseSeedWords(24);
     await chooseMode("Number bases");
     document.querySelector('input[name="entropy-format"][value="base64"]').click();
     const base64 = await until(() => document.getElementById("base64"), "Base64 input");
@@ -883,37 +889,59 @@
     document.querySelector('#workspace [data-workspace="calc"]').click();
     await until(() => !document.getElementById("key-manager").hidden, "key workspace");
   });
-  await test("Key Station methods stay horizontal and expose consistent icons", async () => {
+  await test("Key Station methods are one dropdown carrying every method's mark", async () => {
     const modes = document.getElementById("modes");
-    const buttons = [...modes.querySelectorAll("button")];
-    equal(buttons.length, 5);
-    equal(buttons.map((button) => button.dataset.keyMode).join(","), "dice,cards,hex,seed,key");
-    buttons.forEach((button) => {
-      assert(button.getAttribute("aria-label"), "An icon method is missing its accessible name");
-      assert(button.querySelector(".key-method-icon svg"), `${button.dataset.keyMode} is missing its SVG icon`);
-      assert(button.querySelector(".key-mode-label"), `${button.dataset.keyMode} is missing its wide-screen label`);
+    const select = document.getElementById("key-mode-select");
+    assert(select && modes.contains(select), "The method select is missing from #modes");
+    assert(!modes.querySelector(".tab"), "The segmented method row should be gone at every width");
+    equal([...select.options].map((option) => option.value).join(","), "dice,cards,hex,seed,key");
+    equal(select.getAttribute("aria-labelledby"), "key-method-label");
+    equal(document.getElementById("key-method-label").textContent, "Method");
+    const root = modes.querySelector(".custom-select");
+    assert(root, "The method select was not upgraded to the shared dropdown");
+    const button = root.querySelector(".custom-select-button");
+    const labels = { dice: "Dice rolls", cards: "Cards", hex: "Number bases", seed: "Seed phrase", key: "Private key" };
+    // Earlier tests leave their own method selected, so read the state rather
+    // than assuming the page opened on dice.
+    const opening = select.value;
+    assert(button.querySelector(".key-method-icon svg"), "The closed control is missing the chosen method's mark");
+    assert(button.textContent.includes(labels[opening]), "The closed control does not name the chosen method");
+    button.click();
+    await wait(25);
+    const options = [...root.querySelectorAll(".custom-select-option")];
+    equal(options.length, 5);
+    options.forEach((option, index) => {
+      assert(option.querySelector(".key-method-icon svg"), `Option ${index} is missing its SVG mark`);
+      assert(option.textContent.trim().length > 0, `Option ${index} is missing its label`);
     });
-    const cardButton = modes.querySelector('[data-key-mode="cards"]'), cardFront = cardButton.querySelector('[data-part="card-front"]');
-    assert(cardFront, "Cards icon is missing its opaque front card");
-    equal(getComputedStyle(cardFront).fill, getComputedStyle(cardButton).backgroundColor, "Front card does not mask the rear card on the default surface");
-    cardButton.click();
+    assert(options[1].querySelector('[data-part="card-front"]'), "Cards mark is missing its opaque front card");
+    // Choosing a method drives the same state the button row used to.
+    options[1].click();
+    await wait(60);
+    equal(select.value, "cards");
+    assert(button.textContent.includes(labels.cards), "The closed control did not follow the choice");
+    // The front card masks the rear one against whatever surface it is drawn
+    // on: the closed control's ground, and the selected row's tint.
+    equal(
+      getComputedStyle(button.querySelector('[data-part="card-front"]')).fill,
+      getComputedStyle(button).backgroundColor,
+      "Front card does not mask the rear card on the closed control",
+    );
+    button.click();
     await wait(25);
-    equal(getComputedStyle(cardFront).fill, getComputedStyle(cardButton).backgroundColor, "Front card does not follow the selected surface");
-    buttons[0].click();
+    const selectedRow = root.querySelector('.custom-select-option[aria-selected="true"]');
+    equal(
+      getComputedStyle(selectedRow.querySelector('[data-part="card-front"]')).fill,
+      getComputedStyle(selectedRow).backgroundColor,
+      "Front card does not mask the rear card on the selected row",
+    );
+    button.click();
     await wait(25);
-    const previousWidth = modes.style.width;
-    try {
-      modes.style.width = "210px";
-      dispatchEvent(new Event("resize"));
-      await wait(50);
-      assert(!modes.classList.contains("is-stacked"), "Key methods switched to the vertical fallback");
-      const top = buttons[0].offsetTop;
-      assert(buttons.every((button) => Math.abs(button.offsetTop - top) <= 1), "Key methods did not remain on one row");
-      assert(modes.scrollWidth > modes.clientWidth, "Constrained methods should remain reachable by horizontal scrolling");
-    } finally {
-      modes.style.width = previousWidth;
-      dispatchEvent(new Event("resize"));
-    }
+    // And a change from the application side moves the control back.
+    select.value = opening;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await wait(60);
+    assert(button.textContent.includes(labels[opening]), "The control did not follow a programmatic change");
   });
   await test("Station icons preserve their intended responsive footprints", async () => {
     const stations = [
@@ -1559,7 +1587,7 @@
   });
 
   await test("a known BIP39 wallet can be derived through the UI", async () => {
-    document.querySelector('[data-seed-words="12"]').click();
+    chooseSeedWords(12);
     await chooseMode("Number bases");
     document.querySelector('input[name="entropy-format"][value="hex"]').click();
     const hex = await until(() => document.getElementById("hex"), "hex input");

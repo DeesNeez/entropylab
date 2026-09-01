@@ -72,7 +72,7 @@
       <div class="key-tab-strip"><div class="key-tabs" id="key-tabs" role="tablist" aria-label="Keys"></div><div class="add-item-control"><button class="add-key" id="add-key" type="button" aria-label="Open Key Station to derive another key" aria-describedby="add-key-tooltip">+</button><span class="add-item-tooltip" id="add-key-tooltip" role="tooltip">Open Key Station to derive another key</span></div><div class="add-item-control"><button class="add-key remove-key" id="delete-key" type="button" aria-label="Delete current key" aria-describedby="delete-key-tooltip" disabled>−</button><span class="add-item-tooltip" id="delete-key-tooltip" role="tooltip">Delete this key</span></div></div>
     </section>
     <section class="card no-print" id="calc-card" role="tabpanel" hidden>
-      <div class="row segmented-control key-mode-control" id="modes" role="group" aria-label="Key input mode"></div>
+      <div class="key-mode-select" id="modes"><p class="label" id="key-method-label">Method</p></div>
       <div class="key-summary" id="key-summary" hidden>
         <img class="key-summary-lifehash" id="key-summary-lifehash" width="48" height="48" alt="" hidden>
         <div class="key-summary-text">
@@ -86,12 +86,8 @@
       <div class="key-lab" id="key-lab">
       <section class="seed-length-control" id="seed-length" aria-labelledby="seed-length-label">
         <p class="label" id="seed-length-label">Seed phrase length</p>
-        <div class="row seed-length-options segmented-control" role="group" aria-label="Seed phrase length">
-          <button type="button" class="tab" data-seed-words="12" aria-pressed="false">12 words</button>
-          <button type="button" class="tab" data-seed-words="15" aria-pressed="false">15 words</button>
-          <button type="button" class="tab" data-seed-words="18" aria-pressed="false">18 words</button>
-          <button type="button" class="tab" data-seed-words="21" aria-pressed="false">21 words</button>
-          <button type="button" class="tab active" data-seed-words="24" aria-pressed="true">24 words</button>
+        <div class="seed-length-select">
+          <select id="seed-length-select" aria-labelledby="seed-length-label"><option value="12">12 words</option><option value="15">15 words</option><option value="18">18 words</option><option value="21">21 words</option><option value="24" selected="selected">24 words</option></select>
         </div>
         <p class="muted" id="seed-length-help">24 words use 256 bits of BIP39 entropy.</p>
       </section>

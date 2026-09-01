@@ -458,7 +458,7 @@ hodlRootEl.innerHTML = `
       <div class="key-tab-strip"><div class="key-tabs" id="key-tabs" role="tablist" aria-label="Keys"></div><div class="add-item-control"><button class="add-key" id="add-key" type="button" aria-label="Open Key Station to derive another key" aria-describedby="add-key-tooltip">+</button><span class="add-item-tooltip" id="add-key-tooltip" role="tooltip">Open Key Station to derive another key</span></div><div class="add-item-control"><button class="add-key remove-key" id="delete-key" type="button" aria-label="Delete current key" aria-describedby="delete-key-tooltip" disabled>−</button><span class="add-item-tooltip" id="delete-key-tooltip" role="tooltip">Delete this key</span></div></div>
     </section>
     <section class="card no-print" id="calc-card" role="tabpanel" hidden>
-      <div class="row segmented-control key-mode-control" id="modes" role="group" aria-label="Key input mode"></div>
+      <div class="key-mode-select" id="modes"><p class="label" id="key-method-label">Method</p></div>
       <div class="key-summary" id="key-summary" hidden>
         <img class="key-summary-lifehash" id="key-summary-lifehash" width="48" height="48" alt="" hidden>
         <div class="key-summary-text">
@@ -473,12 +473,8 @@ hodlRootEl.innerHTML = `
       <div class="global-sync-host" id="global-sync-host"></div>
       <section class="seed-length-control" id="seed-length" aria-labelledby="seed-length-label">
         <p class="label" id="seed-length-label">Seed phrase length</p>
-        <div class="row seed-length-options segmented-control" role="group" aria-label="Seed phrase length">
-          <button type="button" class="tab" data-seed-words="12" aria-pressed="false">12 words</button>
-          <button type="button" class="tab" data-seed-words="15" aria-pressed="false">15 words</button>
-          <button type="button" class="tab" data-seed-words="18" aria-pressed="false">18 words</button>
-          <button type="button" class="tab" data-seed-words="21" aria-pressed="false">21 words</button>
-          <button type="button" class="tab active" data-seed-words="24" aria-pressed="true">24 words</button>
+        <div class="seed-length-select">
+          <select id="seed-length-select" aria-labelledby="seed-length-label"><option value="12">12 words</option><option value="15">15 words</option><option value="18">18 words</option><option value="21">21 words</option><option value="24" selected="selected">24 words</option></select>
         </div>
         <p class="muted" id="seed-length-help">24 words use 256 bits of BIP39 entropy.</p>
       </section>
@@ -931,23 +927,33 @@ function hodlCreateKeyMethodIcon(mode) {
   span.appendChild(svg);
   return span;
 }
-hodlKeyModes.forEach((e) => {
-  let t = document.createElement("button"), label = document.createElement("span"), active = e === hodlKeyMode;
-  t.type = "button";
-  t.className = "tab" + (active ? " active" : "");
-  t.dataset.keyMode = e;
-  t.setAttribute("aria-pressed", String(active));
-  t.setAttribute("aria-label", hodlKeyModeLabels[e]);
-  t.title = hodlKeyModeLabels[e];
-  label.className = "key-mode-label";
-  label.textContent = hodlKeyModeLabels[e];
-  t.append(hodlCreateKeyMethodIcon(e), label);
-  t.onclick = () => hodlSetMode(e);
-  hodlModesEl.appendChild(t);
+// The method picker is a dropdown at every width, wearing the Script type
+// control's chrome: enhanced-inputs.js upgrades it and asks
+// entropylabOptionIcon for each method's mark.
+var hodlKeyModeSelectEl = document.createElement("select");
+hodlKeyModeSelectEl.id = "key-mode-select";
+hodlKeyModeSelectEl.setAttribute("aria-labelledby", "key-method-label");
+hodlKeyModes.forEach((mode) => {
+  let option = document.createElement("option");
+  option.value = mode;
+  option.textContent = hodlKeyModeLabels[mode];
+  option.selected = mode === hodlKeyMode;
+  hodlKeyModeSelectEl.appendChild(option);
 });
-document.querySelectorAll("#seed-length [data-seed-words]").forEach((button) => {
-  button.onclick = () => hodlSetSeedLength(Number(button.dataset.seedWords));
-});
+hodlKeyModeSelectEl.entropylabOptionIcon = (value) => hodlCreateKeyMethodIcon(value);
+hodlKeyModeSelectEl.onchange = () => {
+  if (hodlKeyModeSelectEl.value !== hodlKeyMode) hodlSetMode(hodlKeyModeSelectEl.value);
+};
+hodlModesEl.appendChild(hodlKeyModeSelectEl);
+// Every path that changes the method moves the control with it. Sync, not
+// change: change would come straight back through onchange.
+function hodlSyncKeyModeSelect() {
+  if (hodlKeyModeSelectEl.value === hodlKeyMode) return;
+  hodlKeyModeSelectEl.value = hodlKeyMode;
+  hodlKeyModeSelectEl.dispatchEvent(new Event("entropylab:sync-select"));
+}
+var hodlSeedLengthSelectEl = hodlElement("#seed-length-select");
+hodlSeedLengthSelectEl.onchange = () => hodlSetSeedLength(Number(hodlSeedLengthSelectEl.value));
 hodlElement("#go").onclick = () => hodlHandleDerivationButton("key", hodlCalculateKey);
 hodlElement("#wipe").onclick = hodlWipeActiveKey;
 function hodlElement(e) {
@@ -5044,7 +5050,10 @@ function hodlGlobalSyncFromCurrentInput() {
   return true;
 }
 function hodlGlobalSyncControlMarkup(state) {
-  return `<div class="global-sync-row"><label class="seed-autocomplete-toggle global-sync-toggle"><input type="checkbox" id="global-entropy-sync" ${state?.globalSync ? "checked" : ""} /><span><strong>Sync entropy across methods</strong> <span class="seed-autocomplete-note">(Keeps non-hashed methods synchronized. Hashed inputs update them one way and are never overwritten.)</span></span></label><span class="global-sync-status" id="global-sync-status" aria-live="polite" ${state?.globalSync && state?.globalSyncBitCount ? "" : "hidden"}>${hodlCopiedIconMarkup()}<span>${state?.globalSyncBitCount || 0} bits synced</span></span></div>`;
+  // Two rows: the switch and its title, then the explanation beneath. The
+  // explanation describes the checkbox rather than naming it, so it stays out
+  // of the accessible name and stays reachable through aria-describedby.
+  return `<div class="global-sync-row"><div class="global-sync-head"><label class="seed-autocomplete-toggle global-sync-toggle"><input type="checkbox" id="global-entropy-sync" aria-describedby="global-sync-note" ${state?.globalSync ? "checked" : ""} /><span class="label">Sync entropy across methods</span></label><span class="global-sync-status" id="global-sync-status" aria-live="polite" ${state?.globalSync && state?.globalSyncBitCount ? "" : "hidden"}>${hodlCopiedIconMarkup()}<span>${state?.globalSyncBitCount || 0} bits synced</span></span></div><p class="seed-autocomplete-note global-sync-note" id="global-sync-note">(Keeps non-hashed methods synchronized. Hashed inputs update them one way and are never overwritten.)</p></div>`;
 }
 function hodlRenderGlobalSyncControl() {
   let host = document.getElementById("global-sync-host"), state = hodlKeys[hodlActiveKey];
@@ -5226,11 +5235,11 @@ function hodlUpdateSeedLengthControl() {
   if (!section) return;
   let config = hodlSeedConfig();
   section.hidden = hodlKeyMode === "key";
-  section.querySelectorAll("[data-seed-words]").forEach((button) => {
-    let active = Number(button.dataset.seedWords) === config.words;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
+  // Sync, not change: change would come straight back through onchange.
+  if (hodlSeedLengthSelectEl.value !== String(config.words)) {
+    hodlSeedLengthSelectEl.value = String(config.words);
+    hodlSeedLengthSelectEl.dispatchEvent(new Event("entropylab:sync-select"));
+  }
   let help = document.getElementById("seed-length-help");
   if (!help) return;
   if (hodlKeyMode === "hex") {
@@ -6263,7 +6272,7 @@ function hodlInitMasterFingerprintPreview() {
     hodlQueueMasterFingerprintPreview();
   });
   panel.addEventListener("click", event => {
-    let target = event.target instanceof Element ? event.target.closest("#modes button, [data-seed-words], [data-d], [data-lw], [data-card-suit], [data-card-rank], [data-direct-card-rank], #card-undo") : null;
+    let target = event.target instanceof Element ? event.target.closest("#modes .custom-select-option, #seed-length .custom-select-option, [data-d], [data-lw], [data-card-suit], [data-card-rank], [data-direct-card-rank], #card-undo") : null;
     if (!target) return;
     // Pads and pickers that mutate an input without a bubbling "input" event
     // still re-run the sync: [data-d] writes the dice textarea directly,
@@ -9687,11 +9696,7 @@ function hodlSetMode(mode) {
   hodlSeedMethod = hodlNormalizeSeedMethod(state?.seedMethod);
   hodlSeedZeroIndexed = Boolean(state?.seedZeroIndexed);
   hodlEntropyFormat = hodlNormalizeEntropyFormat(state?.entropyFormat);
-  [...hodlModesEl.children].forEach((button, index) => {
-    let active = hodlKeyModes[index] === hodlKeyMode;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
+  hodlSyncKeyModeSelect();
   hodlRenderKeyForm();
   hodlRestoreFormFields(state);
   hodlUpdateSeedLengthControl();
@@ -9806,11 +9811,7 @@ function hodlRestoreKey() {
     hodlWalletResult = null;
     hodlRevealPrivate = false;
     hodlAccountId = "bip84";
-    [...hodlModesEl.children].forEach((button, index) => {
-      let active = index === 0;
-      button.classList.toggle("active", active);
-      button.setAttribute("aria-pressed", String(active));
-    });
+    hodlSyncKeyModeSelect();
     hodlRenderKeyForm();
     let pass2 = document.getElementById("pass");
     if (pass2) {
@@ -9858,11 +9859,7 @@ function hodlRestoreKey() {
   hodlTargetWordCount = hodlSeedLengths[Number(state.targetWords)] ? Number(state.targetWords) : 24;
   hodlDiceCoinPositions = hodlNormalizeDiceCoinPositions(state.diceCoinPositions);
   hodlPickedLastWord = hodlDiceMethod === "dplus" ? state.dplusLastWord || "" : hodlDiceMethod === "bitbox" ? state.lastWord || "" : "";
-  [...hodlModesEl.children].forEach((button, index) => {
-    let active = hodlKeyModes[index] === hodlKeyMode;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
+  hodlSyncKeyModeSelect();
   hodlRenderKeyForm();
   let pass = document.getElementById("pass");
   if (pass) {
@@ -10869,7 +10866,6 @@ function hodlSyncSegmentedControls() {
     if (!group.getClientRects().length) return;
     let buttons = [...group.children].filter((child) => child.matches(".tab"));
     group.classList.remove("is-stacked");
-    if (group.classList.contains("key-mode-control")) return;
     if (buttons.length < 2) return;
     let firstTop = buttons[0].offsetTop, wrapped = buttons.some((button) => Math.abs(button.offsetTop - firstTop) > 1);
     group.classList.toggle("is-stacked", wrapped);
