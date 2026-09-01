@@ -5,7 +5,7 @@
 // Three layers of assurance:
 //  1. Fixed, independently published constants (the generator-point legacy
 //     address, the BIP173/BIP350 reference address, the BIP86 first address,
-//     the BIP433 P2A address).
+//     the BIP433 P2A address, and the BIP390 musig() descriptor vectors).
 //  2. Differential checks against @scure/btc-signer and @scure/base (pinned,
 //     previously the implementation).
 //  3. Round-trips through the existing PSBT/descriptors suites exercise these
@@ -17,7 +17,7 @@ import { NETWORK, TEST_NETWORK, p2pkh, p2sh, p2tr, p2wpkh } from "@scure/btc-sig
 import { bech32m } from "@scure/base";
 import { base58checkEncode, base58checkDecode } from "../src/js/base58.js";
 import { bech32mDecode, bech32mEncode, fromWords, toWords } from "../src/js/bech32.js";
-import { addressFor, addressFromScript, multisigScript, multisigTrScript, p2pkhScript, p2shP2wpkhScript, p2shScript, p2trKeyScript, p2trLeafScript, p2wpkhScript, p2wshScript } from "../src/js/addresses.js";
+import { addressFor, addressFromScript, descriptorDerive, multisigScript, multisigTrScript, p2pkhScript, p2shP2wpkhScript, p2shScript, p2trKeyScript, p2trLeafScript, p2wpkhScript, p2wshScript } from "../src/js/addresses.js";
 import { hex, base64 } from "../src/js/coders.js";
 import { hash160 } from "../src/js/hashes.js";
 
@@ -118,6 +118,126 @@ test("bech32m word-level encode/decode matches @scure/base including >90 chars",
   // bad checksum -> null (decodeUnsafe-style), not a throw
   const tampered = ours.slice(0, -2) + (ours.endsWith("q") ? "p" : "q");
   assert.equal(bech32mDecode(tampered), null);
+});
+
+// ── descriptorDerive: rust-miniscript + BIP390 musig() through the WASM boundary ──
+
+// The two xpubs of the BIP390 test vectors.
+const BIP390_XA = "xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL";
+const BIP390_XB = "xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y";
+const BIP390_PK = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+const BIP390_RAW = "musig(02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9,03dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659,023590a94e768f8e1815c2f24b4d80a8e3149316c3518ce7b7ad338368d038ca66)";
+
+test("descriptorDerive reproduces the valid BIP390 musig() vectors", () => {
+  const script = (descriptor, index = 0) => descriptorDerive(descriptor, index, "mainnet").scriptHex;
+  // rawtr, no derivation, a WIF participant (its pubkey is what aggregates).
+  assert.equal(
+    script(`rawtr(musig(KwDiBf89QgGbjEhKnhXJuH7LrciVrZi3qYjgd9M7rFU74sHUHy8S,03dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659,023590a94e768f8e1815c2f24b4d80a8e3149316c3518ce7b7ad338368d038ca66))`),
+    "5120789d937bade6673538f3e28d8368dda4d0512f94da44cf477a505716d26a1575",
+  );
+  // tr over raw keys: aggregate tweaked per BIP341.
+  assert.equal(script(`tr(${BIP390_RAW})`), "512079e6c3e628c9bfbce91de6b7fb28e2aec7713d377cf260ab599dcbc40e542312");
+  // xpub participants with BIP328 aggregate derivation /0/*.
+  const ranged = `rawtr(musig(${BIP390_XA},${BIP390_XB})/0/*)`;
+  assert.equal(script(ranged, 0), "51209508c08832f3bb9d5e8baf8cb5cfa3669902e2f2da19acea63ff47b93faa9bfc");
+  assert.equal(script(ranged, 1), "51205ca1102663025a83dd9b5dbc214762c5a6309af00d48167d2d6483808525a298");
+  assert.equal(script(ranged, 2), "51207dbed1b89c338df6a1ae137f133a19cae6e03d481196ee6f1a5c7d1aeb56b166");
+  // musig() as the tr() internal key, with a script path alongside.
+  const internal = `tr(musig(${BIP390_XA},${BIP390_XB})/0/*,pk(${BIP390_PK}))`;
+  assert.equal(script(internal, 0), "51201d377b637b5c73f670f5c8a96a2c0bb0d1a682a1fca6aba91fe673501a189782");
+  assert.equal(script(internal, 1), "51208950c83b117a6c208d5205ffefcf75b187b32512eb7f0d8577db8d9102833036");
+  assert.equal(script(internal, 2), "5120a49a477c61df73691b77fcd563a80a15ea67bb9c75470310ce5c0f25918db60d");
+  // musig() as a leaf key.
+  const leaf = `tr(${BIP390_PK},pk(musig(${BIP390_XA},${BIP390_XB})/0/*))`;
+  assert.equal(script(leaf, 0), "512068983d461174afc90c26f3b2821d8a9ced9534586a756763b68371a404635cc8");
+  assert.equal(script(leaf, 1), "5120368e2d864115181bdc8bb5dc8684be8d0760d5c33315570d71a21afce4afd43e");
+  assert.equal(script(leaf, 2), "512097a1e6270b33ad85744677418bae5f59ea9136027223bc6e282c47c167b471d5");
+  // Duplicate participants and fixed steps at both levels.
+  assert.equal(script(`tr(musig(${BIP390_XA}/1,${BIP390_XA}/1)/2)`), "5120a17ceacd6422bd5ffd9f165807b254b7d68ad39f179cc4f11545a6835227e97c");
+});
+
+test("descriptorDerive rejects the invalid BIP390 vectors", () => {
+  for (const descriptor of [
+    // musig() outside tr()/rawtr() is not allowed.
+    `pk(${BIP390_RAW})`,
+    `pkh(${BIP390_RAW})`,
+    `wpkh(${BIP390_RAW})`,
+    `combo(${BIP390_RAW})`,
+    `sh(wpkh(${BIP390_RAW}))`,
+    `sh(wsh(pk(${BIP390_RAW})))`,
+    `wsh(${BIP390_RAW})`,
+    `sh(${BIP390_RAW})`,
+    // a ranged musig() requires xpub participants.
+    `tr(${BIP390_RAW}/0/0)`,
+    // ranged participants conflict with a ranged musig().
+    `tr(musig(${BIP390_XA}/*,${BIP390_XB})/0/*)`,
+    `tr(musig(${BIP390_XA}/*,${BIP390_XB}/*)/1/2)`,
+    // multipath participants conflict with a multipath musig().
+    `tr(musig(${BIP390_XA}/<0;1>,${BIP390_XB})/<2;3>)`,
+    // hardened steps are impossible: there is no aggregate private key.
+    `tr(musig(${BIP390_XA},${BIP390_XB})/0h/*)`,
+    `tr(musig(${BIP390_XA},${BIP390_XB})/0/*h)`,
+    // no nesting.
+    `tr(musig(musig(${BIP390_XA},${BIP390_XB})))`,
+  ]) {
+    assert.throws(() => descriptorDerive(descriptor, 0, "mainnet"), /Invalid output descriptor/, descriptor);
+  }
+});
+
+test("descriptorDerive derives the app taproot multisig (sortedmulti_a)", () => {
+  // Same keys and NUMS internal key as the msig-address-kinds vectors.
+  const keys = [G_COMPRESSED, hexToBytes("02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"), hexToBytes("02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9")];
+  const inner = (list) => list.map((k) => bytesToHex(k.slice(1))).join(",");
+  const sorted = descriptorDerive(`tr(${bytesToHex(NUMS)},sortedmulti_a(2,${inner(keys)}))`, 0, "mainnet");
+  assert.equal(sorted.address, "bc1pm5jn9xnjz3v9xm7jjw2yheajy92pps5fdazdpfnmvzfymu787hhs2vktyy");
+  // sortedmulti_a ignores the written order; multi_a is defined by it.
+  const reversed = [...keys].reverse();
+  assert.equal(descriptorDerive(`tr(${bytesToHex(NUMS)},sortedmulti_a(2,${inner(reversed)}))`, 0, "mainnet").scriptHex, sorted.scriptHex);
+  assert.notEqual(descriptorDerive(`tr(${bytesToHex(NUMS)},multi_a(2,${inner(reversed)}))`, 0, "mainnet").scriptHex, sorted.scriptHex);
+});
+
+test("descriptorDerive: xpub descriptors and raw-key descriptors agree", async () => {
+  // The two paths to a multisig address must never drift: deriving the
+  // branch descriptor's xpubs in the crate equals deriving the child keys
+  // (hdkey.js, BIP32-vector-tested) and evaluating the raw-key descriptor.
+  const { HDKey } = await import("../src/js/hdkey.js");
+  const cosigners = [
+    "[73c5da0a/48h/1h/0h/2h]tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ",
+    "[b8688df1/48h/1h/0h/2h]tpubDEfobrrtptRTbKf4gysDhoabneABDTAcdj3Vbn4XwPsLE2pmqpizSPRG6zHsbAMuiSgWmWPsYCLHTKTPpyrGJ5rAoTpKoQNZcxodiPf2tSJ",
+    "[3f635a63/48h/1h/0h/2h]tpubDFPtPArj4GzBEFHohegg1Xatrc1Fi9oSox5LzuSRX91miwQxuUrEpBxpvDRsmZYJKYFhgdK3UStsjC8JKXfUbMinjFqiEM4uNwzVaCaHpys",
+  ];
+  const branchDescriptor = `wsh(sortedmulti(2,${cosigners.map((c) => `${c}/0/*`).join(",")}))`;
+  for (const index of [0, 1, 7]) {
+    const fromXpubs = descriptorDerive(branchDescriptor, index, "testnet");
+    const rawKeys = cosigners.map((c) => HDKey.fromExtendedKey(c.slice(c.indexOf("]") + 1), { private: 0x04358394, public: 0x043587cf }).derive(`m/0/${index}`).publicKey);
+    const fromRawKeys = descriptorDerive(`wsh(sortedmulti(2,${rawKeys.map((k) => bytesToHex(k)).join(",")}))`, 0, "testnet");
+    assert.equal(fromXpubs.address, fromRawKeys.address, `index ${index}`);
+    assert.equal(fromXpubs.scriptHex, fromRawKeys.scriptHex, `index ${index}`);
+    assert.deepEqual(fromXpubs.pubkeys, fromRawKeys.pubkeys, `index ${index}`);
+    assert.match(fromXpubs.address, /^tb1q/);
+  }
+  // The Taproot flow (BIP87-style origins, x-only keys under the NUMS
+  // internal key) agrees the same way, with sortedmulti_a doing the sort.
+  const taprootDescriptor = `tr(${bytesToHex(NUMS)},sortedmulti_a(2,${cosigners.map((c) => `${c}/1/*`).join(",")}))`;
+  for (const index of [0, 3]) {
+    const fromXpubs = descriptorDerive(taprootDescriptor, index, "testnet");
+    const rawKeys = cosigners.map((c) => HDKey.fromExtendedKey(c.slice(c.indexOf("]") + 1), { private: 0x04358394, public: 0x043587cf }).derive(`m/1/${index}`).publicKey);
+    const fromRawKeys = descriptorDerive(`tr(${bytesToHex(NUMS)},sortedmulti_a(2,${rawKeys.map((k) => bytesToHex(k.slice(1))).join(",")}))`, 0, "testnet");
+    assert.equal(fromXpubs.address, fromRawKeys.address, `taproot index ${index}`);
+    assert.equal(fromXpubs.scriptHex, fromRawKeys.scriptHex, `taproot index ${index}`);
+    assert.match(fromXpubs.address, /^tb1p/);
+  }
+});
+
+test("descriptorDerive verifies a supplied #checksum and refuses multipath", () => {
+  const body = `tr(${bytesToHex(NUMS)},sortedmulti_a(2,${bytesToHex(G_COMPRESSED.slice(1))},${bytesToHex(hexToBytes("02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5").slice(1))}))`;
+  const good = descriptorDerive(body, 0, "mainnet");
+  // rfjlk7yv is the BIP380 checksum of this exact body (the app's Le agrees).
+  const checksummed = descriptorDerive(`${body}#rfjlk7yv`, 0, "mainnet");
+  assert.equal(checksummed.scriptHex, good.scriptHex);
+  assert.throws(() => descriptorDerive(`${body}#qqqqqqqq`, 0, "mainnet"), /Invalid output descriptor/);
+  assert.throws(() => descriptorDerive("wpkh(xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWcLteoGVky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ/<0;1>/*)", 0, "mainnet"), /Invalid output descriptor/);
+  assert.throws(() => descriptorDerive(body, 0, "regtest"), /Unknown Bitcoin network/);
 });
 
 test("base58check and coders match @scure/base", async () => {

@@ -23,7 +23,7 @@ import { parseRawTx, extractEcdsaSignatures, inscriptionHints, isPsbtMagic, seri
 import { wasmExports as hodlWasm, withInput as hodlWasmIn, withOutput as hodlWasmOut } from "./entropylab-wasm.js";
 import { indexHdKey, indexSingleKey, matchOwnership, pathLabel } from "./ownership.js";
 import { hex as hodlHex } from "./coders.js";
-import { addressFor, addressFromScript, multisigScript, multisigTrScript, p2shP2wpkhScript, p2shScript, p2trKeyScript, p2trLeafScript, p2wshScript } from "./addresses.js";
+import { addressFor, addressFromScript, descriptorDerive, p2shP2wpkhScript, p2shScript, p2trKeyScript, p2wshScript } from "./addresses.js";
 import { base58checkDecode, base58checkEncode } from "./base58.js";
 import { HDKey as hodlHDKey } from "./hdkey.js";
 import { entropyToMnemonic as hodlEntropyToMnemonic, mnemonicToEntropy as hodlMnemonicToEntropy, mnemonicToSeedSync as hodlMnemonicToSeed, validateMnemonic as hodlIsValidMnemonic } from "./bip39.js";
@@ -7528,11 +7528,6 @@ function hodlInitMsig() {
   hodlElement("#msig-go").onclick = () => hodlHandleDerivationButton("msig", hodlBuildMsig);
   hodlElement("#msig-wipe").onclick = hodlWipeActiveMsig;
 }
-function hodlCmpBytes(a, b) {
-  let n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return a.length - b.length;
-}
 function hodlScriptKind() {
   return document.getElementById("msig-script-type")?.value || "p2wsh";
 }
@@ -7546,29 +7541,18 @@ function hodlXOnlyPubkey(pubkey) {
   return pubkey.length === 33 ? pubkey.slice(1) : pubkey.slice(0, 32)
 }
 
+// Multisig scripts and addresses are evaluated by rust-miniscript in the
+// WASM crate: the keys become a descriptor (sortedmulti/multi, or
+// sortedmulti_a/multi_a under a BIP341 NUMS internal key for Taproot) and the
+// crate derives the output. Sorting is the descriptor's job, as BIP67 and
+// BIP386 intend — multi keeps the listed order, sortedmulti ignores it.
 function hodlMsigAddr(pubkeys, m, network, kind, sorted = !0) {
-  if (kind === "p2tr") {
-    let xonly = [...pubkeys].map(hodlXOnlyPubkey);
-    if (sorted) xonly.sort(hodlCmpBytes);
-    let script = multisigTrScript(m, xonly),
-      out = addressFromScript(p2trLeafScript(hodlTaprootNumsKey(), script), network);
-    if (!out) throw new Error("Failed to build Taproot multisig address");
-    return {
-      address: out,
-      scriptHex: hodlHex.encode(script),
-      kind
-    }
-  }
-  let keys = [...pubkeys];
-  if (sorted) keys.sort(hodlCmpBytes);
-  let ms = multisigScript(m, keys);
-  if (kind === "p2wsh") {
-    return { address: addressFromScript(p2wshScript(ms), network), scriptHex: hodlHex.encode(ms), kind };
-  }
-  if (kind === "p2sh-p2wsh") {
-    return { address: addressFromScript(p2shScript(p2wshScript(ms)), network), scriptHex: hodlHex.encode(ms), kind };
-  }
-  return { address: addressFromScript(p2shScript(ms), network), scriptHex: hodlHex.encode(ms), kind };
+  let op = kind === "p2tr" ? sorted ? "sortedmulti_a" : "multi_a" : sorted ? "sortedmulti" : "multi";
+  let inner = `${op}(${m},${pubkeys.map((key) => hodlHex.encode(kind === "p2tr" ? hodlXOnlyPubkey(key) : key)).join(",")})`;
+  let descriptor = kind === "p2tr" ? `tr(${hodlHex.encode(hodlTaprootNumsKey())},${inner})` : kind === "p2wsh" ? `wsh(${inner})` : kind === "p2sh-p2wsh" ? `sh(wsh(${inner}))` : `sh(${inner})`;
+  let derived = descriptorDerive(descriptor, 0, network);
+  if (!derived.address) throw new Error("Failed to build the multisig address");
+  return { address: derived.address, scriptHex: derived.scriptHex, kind };
 }
 function hodlValidatedMsigInputs() {
   let coinType = hodlReadCoinType(document.getElementById("msig-network")), network = hodlNetworkFromCoinType(coinType), addressWindow = hodlReadAddressWindow("msig-"), branchWindow = hodlReadBranchWindow("msig-"), count = addressWindow.range, addressStart = addressWindow.start, branchStart = branchWindow.start, branchRange = branchWindow.range, hardening = hodlReadHardening("msig-"), n = Number(document.getElementById("msig-n")?.value), m = Number(document.getElementById("msig-m")?.value);
@@ -7633,15 +7617,15 @@ async function hodlBuildMsig(progress) {
     for (let branch = branchStart; branch < branchStart + branchRange; branch++) {
       let suffix = bip45 ? `/0/${branch}/*` : `/${branch}/*`, path = bip45 ? `m/0/${branch}/` : `m/${branch}/`, inner = keyTokens.map(key => key + suffix).join(","), descriptor = hodlMsigInnerDescriptor(kind, m, inner, sorted), rows = [];
       for (let index = addressStart; index < addressStart + count; index++) {
-        let publicKeys = nodes.map((node) => {
-          let key = node.derive(path + index).publicKey;
-          if (!key) throw new Error("Could not derive a public key");
-          return key;
-        });
+        // The branch descriptor is the source of truth: rust-miniscript
+        // derives the address from it, so what is shown here cannot drift
+        // from the watch-only descriptor exported below.
+        let derived = descriptorDerive(descriptor, index, network), publicKeys = derived.pubkeys.map((key) => hodlHex.decode(key));
+        if (!derived.address) throw new Error("Could not derive a multisig address");
         // Final defense behind the co-signer identity check: never emit a
         // script whose public keys repeat, whatever the supplied encodings were.
         if (new Set(publicKeys.map(hodlHex.encode)).size !== publicKeys.length) throw new Error("Two co-signers derive the same public key. Every co-signer must use a distinct extended public key.");
-        rows.push(Object.assign({ index, branch, role: hodlAddressBranchRole(branch), path: path.slice(1) + index }, hodlMsigAddr(publicKeys, m, network, kind, sorted)));
+        rows.push(Object.assign({ index, branch, role: hodlAddressBranchRole(branch), path: path.slice(1) + index }, { address: derived.address, scriptHex: derived.scriptHex, kind }));
         let pause = progress.step();
         if (pause) await pause;
       }
