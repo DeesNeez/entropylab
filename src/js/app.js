@@ -635,7 +635,7 @@ hodlRootEl.innerHTML = `
       <div class="tool-intro" id="msig-tool-intro" hidden>
         <div class="kicker">Multiple keys, one wallet</div>
         <h2>Derive a multisig wallet</h2>
-        <p class="muted msig-intro">Combine extended public keys into a multisignature wallet. Paste each key origin and extended public key as exported by its signer: <span class="mono">[fingerprint/48h/0h/0h/2h]xpub\u2026</span>. A trailing branch wildcard such as <span class="mono">/0/*</span> is accepted and ignored — the receive/change branches and address indexes are derived for you. A trailing numeric path such as <span class="mono">/0/20</span> is honored as descriptor key derivation: the co-signer's public keys derive through it, and the exported descriptor carries it before the branch step. Private keys are not needed. The derived addresses can receive bitcoin, and spending requires the configured number of signatures.</p>
+        <p class="muted msig-intro">Combine extended public keys into a multisignature wallet. Paste each key origin and extended public key as exported by its signer: <span class="mono">[fingerprint/48h/0h/0h/2h]xpub\u2026</span>. A trailing branch step such as <span class="mono">/0/*</span> is accepted and ignored — the receive/change branches and address indexes are derived for you. A longer trailing path such as <span class="mono">/0/20</span> or <span class="mono">/0/0/20/*</span> is honored as descriptor key derivation in full: the co-signer's public keys derive through it, and the exported descriptor carries it before the branch step. Private keys are not needed. The derived addresses can receive bitcoin, and spending requires the configured number of signatures.</p>
       </div>
       <section class="key-manager no-print" id="msig-manager" hidden>
       <div class="key-tab-strip"><div class="key-tabs" id="msig-tabs" role="tablist" aria-label="Multisigs"></div><div class="add-item-control"><button class="add-key" id="add-msig" type="button" aria-label="Open MS Station to derive another multisig" aria-describedby="add-msig-tooltip">+</button><span class="add-item-tooltip" id="add-msig-tooltip" role="tooltip">Open MS Station</span></div><div class="add-item-control"><button class="add-key remove-key" id="delete-msig" type="button" aria-label="Delete current multisig" aria-describedby="delete-msig-tooltip" disabled>−</button><span class="add-item-tooltip" id="delete-msig-tooltip" role="tooltip">Delete this multisig</span></div></div>
@@ -6431,8 +6431,8 @@ function hodlAssertPrivateKeyKind(value, network, kind, trimBrainWallet = false)
 function hodlFilterXpub(e) {
   // < > ; are kept so a pasted multipath step (<0;1>) reaches the parser
   // intact — stripping them would mangle /<0;1> into /01, and with trailing
-  // paths honored that would silently derive through a made-up numeric path
-  // instead of failing loudly.
+  // paths honored the mangled digits would silently derive through a
+  // made-up numeric path instead of reading as the branch position.
   return String(e ?? "").replace(/[^A-Za-z0-9[\]/'*<>;]/g, "");
 }
 function hodlNormalizeOriginPath(path) {
@@ -6442,13 +6442,40 @@ function hodlParseKeyOrigin(raw) {
   let input = String(raw ?? "").trim();
   let match = input.match(/^\[([0-9a-fA-F]{8})\/([0-9A-Za-z/']+)\](.+)$/);
   if (!match) return { origin: null, key: input };
-  // A trailing path after the extended key (xpub…/1) is descriptor key
-  // derivation: the co-signer's public keys are derived through it, so one
-  // account key can serve again under a different path. A branch wildcard
-  // form (/0/*, /<0;1>/*) is decoration — the app derives the branches
-  // itself — and a trailing slash alone is decoration too.
-  let fingerprint = match[1].toLowerCase(), path = hodlNormalizeOriginPath(match[2]), rest = String(match[3] || "").trim().replace(/\/+$/, "").replace(/\/(?:<\d+(?:;\d+)*>|\d+)\/\*$/, "");
-  let suffix = rest.match(/^(.*?)((?:\/\d+[hH']?)+)$/), key = suffix ? suffix[1] : rest, derivationPath = suffix ? hodlNormalizeOriginPath(suffix[2]).replace(/^\//, "") : "";
+  let fingerprint = match[1].toLowerCase(), path = hodlNormalizeOriginPath(match[2]), rest = String(match[3] || "").trim().replace(/\/+$/, "");
+  // The extended key carries no "/", so the first slash splits the key from
+  // a trailing descriptor key-expression path. The path is honored in full:
+  // the co-signer's public keys derive through it, so one account key can
+  // serve again under a different path, and a deep signer export keeps every
+  // step — xpub…/0/0/20/* exports as xpub…/0/0/20/<0;1>/* (a multipath step
+  // is legal at any position, BIP389). The only decoration is the branch
+  // marker itself: a sole numeric step ahead of the wildcard (/0/*), the
+  // multipath form (/<0;1>/*), and the BIP45 cosigner step.
+  let slash = rest.indexOf("/"), key = slash < 0 ? rest : rest.slice(0, slash);
+  let tokens = slash < 0 ? [] : rest.slice(slash + 1).split("/").filter((token) => token !== "");
+  for (let token of tokens) {
+    if (!/^(?:\*|<\d+(?:;\d+)*>|\d+[hH']?)$/.test(token)) throw new Error("Trailing path steps must be numbers, a wildcard *, or a multipath step like <0;1>.");
+  }
+  if (tokens.includes("*") && tokens[tokens.length - 1] !== "*") throw new Error("A wildcard * is only allowed as the last trailing path step.");
+  let hadWildcard = tokens[tokens.length - 1] === "*";
+  if (hadWildcard) tokens.pop();
+  // BIP45 account keys carry their cosigner branch (always 0 here) as the
+  // first trailing step; the descriptor compose re-adds it, so it is
+  // decoration like the branch marker.
+  if (/^45h?$/.test(path.split("/")[0] || "") && tokens.length && /^\d+[hH']?$/.test(tokens[0])) tokens.shift();
+  if (tokens.filter((token) => token.startsWith("<")).length > 1) throw new Error("Only one multipath step like <0;1> is supported in a trailing path.");
+  let multipathAt = tokens.findIndex((token) => token.startsWith("<"));
+  if (multipathAt > 0 && tokens.slice(0, multipathAt).some((token) => !/^\d+[hH']?$/.test(token))) throw new Error("A multipath step like <0;1> must follow plain number steps.");
+  if (multipathAt >= 0 && multipathAt !== tokens.length - 1) throw new Error("A multipath step like <0;1> must be the last trailing path step.");
+  // Steps ahead of a multipath step are honored; the multipath step itself
+  // is the branch position. Without one, a sole step ahead of the wildcard
+  // is the branch marker and every other shape is honored as written.
+  let honoredTokens = multipathAt >= 0 ? tokens.slice(0, multipathAt) : hadWildcard && tokens.length === 1 ? [] : tokens;
+  let derivationPath = honoredTokens.map((token) => {
+    let step = token.match(/^(\d+)([hH']?)$/); // shape guaranteed by the validation above
+    let index = Number(step[1]);
+    return (Number.isSafeInteger(index) ? String(index) : step[1]) + (step[2] ? "h" : "");
+  }).join("/");
   if (fingerprint === "00000000") throw new Error("Key origin fingerprint 00000000 is not a real master fingerprint.");
   if (!/^(?:\d+h?)(?:\/\d+h?)*$/.test(path)) throw new Error("Key origin path must look like 48h/0h/0h/2h.");
   if (!key) throw new Error("Key origin is missing the extended public key.");

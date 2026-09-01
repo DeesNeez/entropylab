@@ -90,8 +90,10 @@ test("a path after the extended key parses and lands in the descriptor token", (
 test("a pasted descriptor key tail is a branch wildcard, not a co-signer path", () => {
   assert.equal(hodlParseMultisigCosigner(`${EXPORT}/0/*`).derivationPath, "");
   assert.equal(hodlParseMultisigCosigner(`${EXPORT}/<0;1>/*`).derivationPath, "");
-  // …but a fixed step before the wildcard is the app's own suffix round-trip.
-  assert.equal(hodlParseMultisigCosigner(`${EXPORT}/1/0/*`).derivationPath, "1");
+  // Two or more steps ahead of the wildcard are the signer's fixed path and
+  // are preserved in full — only a sole branch step (/0/* above) drops.
+  assert.equal(hodlParseMultisigCosigner(`${EXPORT}/1/0/*`).derivationPath, "1/0");
+  assert.equal(hodlParseMultisigCosigner(`${EXPORT}/0/0/20/*`).derivationPath, "0/0/20");
 });
 
 test("hardened or out-of-range path steps are rejected with a clear error", () => {

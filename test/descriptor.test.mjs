@@ -137,8 +137,16 @@ test("origin parse honors a trailing numeric path, with or without decoration", 
   assert.equal(hodlParseKeyOrigin(body + "/0/1/0").derivationPath, "0/1/0");
   // A trailing slash alone is decoration; the path ahead of it still applies.
   assert.equal(hodlParseKeyOrigin(body + "/0/1/0/").derivationPath, "0/1/0");
-  // The branch wildcard step is decoration; the steps ahead of it are honored.
-  assert.equal(hodlParseKeyOrigin(body + "/1/0/*").derivationPath, "1");
+  // A sole step ahead of the wildcard is the branch marker; two or more
+  // steps are the signer's fixed path and are preserved in full.
+  assert.equal(hodlParseKeyOrigin(body + "/1/0/*").derivationPath, "1/0");
+  assert.equal(hodlParseKeyOrigin(body + "/0/0/20/*").derivationPath, "0/0/20");
+  assert.equal(hodlParseKeyOrigin(body + "/0/0/20/<0;1>/*").derivationPath, "0/0/20");
+  // Malformed shapes fail loudly instead of being mangled.
+  assert.throws(() => hodlParseKeyOrigin(body + "/0/*/1"), /wildcard/);
+  assert.throws(() => hodlParseKeyOrigin(body + "/0/foo/1"), /Trailing path steps/);
+  assert.throws(() => hodlParseKeyOrigin(body + "/0/1/<0;1>/<2;3>"), /Only one multipath/);
+  assert.throws(() => hodlParseKeyOrigin(body + "/0/<0;1>/2"), /must be the last trailing path step/);
 });
 
 test("placeholder fingerprint 00000000 is rejected", () => {

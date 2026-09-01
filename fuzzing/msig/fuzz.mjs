@@ -199,12 +199,16 @@ function randomDecoration() {
 }
 
 // Random honored derivation path: 1-3 unhardened numeric steps appended after
-// the extended key (xpub…/0/20). Hardened steps are rejected by the app's
-// co-signer parse (covered by the unit suites), so they are not fuzzed here.
+// the extended key (xpub…/0/20), sometimes carrying the branch wildcard when
+// deep enough that the wildcard is not the sole step (xpub…/0/0/20/* — every
+// step preserved, branches derived below). Hardened steps are rejected by the
+// app's co-signer parse (covered by the unit suites), so they are not fuzzed
+// here.
 function randomDerivationPath() {
   if (nextByte() % 4 === 0) return "";
   let out = "";
   for (let i = 0, steps = 1 + nextInt(3); i < steps; i++) out += `/${nextInt(4)}`;
+  if (out.split("/").length > 2 && nextByte() % 3 === 0) out += "/*";
   return out;
 }
 
@@ -330,6 +334,9 @@ const GUARD_TOKENS = [
   }
   assertEqual(hodlParseKeyOrigin(hodlFilterXpub(GUARD_TOKENS[0] + "/0/1/0")).derivationPath, "0/1/0", "guard honored path");
   assertEqual(hodlParseKeyOrigin(hodlFilterXpub(GUARD_TOKENS[0] + "/<0;1>/*")).derivationPath, "", "guard decoration is not honored");
+  // A deep tail keeps every step ahead of the wildcard — the wildcard form
+  // and the bare path honor identically.
+  assertEqual(hodlParseKeyOrigin(hodlFilterXpub(GUARD_TOKENS[0] + "/0/0/20/*")).derivationPath, "0/0/20", "guard deep wildcard path preserved");
   // Honored trailing path: a numeric path is kept in the token, branches and
   // indexes derive below it, and the multipath export lands below it —
   // xpub/0/0/20 exports as xpub/0/0/20/<0;1>/*. Expected addresses were
