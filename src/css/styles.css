@@ -16,6 +16,13 @@
   --ok-bright: #22c55e; /* a true green: --ok sits closer to olive than the status tag wants */
   --blue: #6f9fca;
   --warn: #c9a44a;
+  /* The Bitcoin Core icon's orange. Both themes share it: it is a brand
+   * signal (mainnet = real coins), not a surface colour. */
+  --bitcoin: #f7931a;
+  /* The other Bitcoin Core network colours, shared across themes for the
+   * same reason: green testnet, purple signet. Regtest reuses --faint. */
+  --testnet: #22c55e;
+  --signet: #a855f7;
   --paper: #f3efe4;
   --playing-card-bg: #292929;
   --playing-card-fg: #eeeeee;
@@ -123,6 +130,20 @@ button:not(:disabled):active * { color: inherit !important; }
    small inline identicon next to the hash it visualizes. */
 .page-footer-build code { font-family: var(--mono); }
 .page-footer-lifehash { vertical-align: -0.25em; margin-left: 4px; border-radius: 3px; }
+/* A fourth row closes the footer: the repository link and the theme toggle,
+   which used to crowd the header bar. Off the bar they are no longer squeezed
+   to 40px, so both take the app's standard 44px target and the link keeps its
+   label at every width. */
+.page-footer-links { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px; margin-top: 14px; }
+.page-footer-links > a { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.page-footer-links .github-repo-link {
+  border-color: color-mix(in oklab, var(--blue) 65%, var(--border));
+  background: color-mix(in oklab, var(--blue) 14%, var(--surface)); color: var(--blue);
+}
+.page-footer-links .github-repo-link:hover {
+  background: color-mix(in oklab, var(--blue) 23%, var(--surface)); color: var(--fg);
+}
+.page-footer-links .github-repo-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; }
 .tab, .btn {
   min-height: 44px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border);
@@ -279,13 +300,14 @@ textarea { display: block; min-height: 96px; letter-spacing: 0.08em; }
 .passphrase-input-shell .dice-input-highlight { white-space: pre; overflow-wrap: normal; word-break: normal; letter-spacing: 0; }
 .passphrase-bip39-status { margin: var(--space-control) 0 0; font-weight: 400; }
 .passphrase-keyboard-host .seed-keyboard { margin-top: var(--space-control); margin-right: auto; margin-left: 0; }
-.seed-keyboard-toggle {
+/* The theme toggle shares this button chrome; it is not a keyboard toggle. */
+.seed-keyboard-toggle, .theme-toggle {
   display: grid; place-items: center; flex: 0 0 44px; width: 44px; min-height: 44px; height: auto; padding: 5px;
   border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--muted);
 }
-.seed-keyboard-toggle:hover { color: var(--fg); border-color: var(--faint); }
+.seed-keyboard-toggle:hover, .theme-toggle:hover { color: var(--fg); border-color: var(--faint); }
 .seed-keyboard-toggle[aria-expanded="true"] { color: var(--selection-accent); border-color: var(--selection-accent); }
-.seed-keyboard-toggle:focus-visible { outline: 2px solid var(--selection-accent); outline-offset: 2px; }
+.seed-keyboard-toggle:focus-visible, .theme-toggle:focus-visible { outline: 2px solid var(--selection-accent); outline-offset: 2px; }
 .seed-keyboard-toggle svg { display: block; width: 30px; height: 22px; }
 .seed-keyboard-icon-case { fill: none; stroke: currentColor; stroke-width: 2.5; }
 .seed-keyboard-icon-keys { fill: currentColor; }
@@ -648,16 +670,6 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
    stops short of both ends: the wordmark wants the full contrast. */
 .site-title { flex: 0 0 auto; font-family: var(--display); font-size: 22px; font-weight: 600; letter-spacing: -0.02em; color: #ffffff; white-space: nowrap; }
 :root[data-theme="light"] .site-title { color: #000000; }
-/* The build stamps this version beside the logo. It takes the
-   kicker's accent and weight, but not its display tracking: this sits in a
-   dense row of controls rather than above a title. */
-.site-version {
-  flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; margin-left: 6px; white-space: nowrap;
-  font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); font-weight: 600;
-}
-/* Version strings opt out of the uppercase, so the "v" prefix stays lowercase
-   wherever one appears in the label. */
-.site-version-number { text-transform: none; font-variant-numeric: tabular-nums; }
 /* Straddles the header's bottom rule so the rule runs into its two edges and
    the tag reads as speared by it, and sits at the bar's left edge, under the
    logo and wordmark. Hanging below the control row is what lets it hold that
@@ -683,6 +695,62 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
 }
 .network-status[data-state="offline"] { color: var(--ok-bright); }
 .network-status[data-state="online"] { color: var(--danger-bright); }
+/* The network picker rides the bar's action row, between the GitHub link and
+   the theme toggle: it states what the tools are set to the way the version
+   states what build they are. The button takes the secondary header-control
+   look, with the Bitcoin Core icon's coin beside the network's name — the
+   same convention mempool.space uses in its network switcher. The coin takes
+   the colour Core gives the network: yellow mainnet, green testnet, purple
+   signet, grey regtest. */
+.network-picker { position: relative; flex: 0 0 auto; }
+.network-picker-button {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); color: var(--fg); font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.network-picker-button:hover { border-color: var(--accent); }
+.network-picker-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Sized with the download and GitHub marks either side of it, which are
+   both 18px; the SVG's own 16px attribute leaves the coin reading small
+   against them, label or no label. */
+.network-picker-glyph { display: block; flex: 0 0 auto; width: 18px; height: 18px; }
+.network-picker-coin { fill: var(--bitcoin); }
+.network-picker[data-network="testnet"] .network-picker-coin { fill: var(--testnet); }
+.network-picker[data-network="signet"] .network-picker-coin { fill: var(--signet); }
+.network-picker[data-network="regtest"] .network-picker-coin { fill: var(--faint); }
+.network-picker-b { fill: #ffffff; }
+.network-picker-chevron { color: var(--accent); transition: transform 120ms ease; }
+.network-picker-button[aria-expanded="true"] .network-picker-chevron { transform: rotate(180deg); }
+/* Right-anchored: the button sits at the bar's right edge, so the menu opens
+   leftward into the page instead of past the viewport. */
+.network-picker-menu {
+  position: absolute; z-index: 100; top: calc(100% + 6px); right: 0; width: 340px;
+  max-width: calc(100vw - 2 * var(--site-header-pad));
+  padding: 6px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface-2); box-shadow: 0 16px 36px rgb(0 0 0 / 55%);
+}
+.network-picker-title {
+  margin: 6px 10px 4px; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--accent); font-weight: 600;
+}
+.network-picker-option {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 8px 10px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--fg);
+  text-align: left; cursor: pointer;
+}
+/* Each option carries its network's coin, the mempool.space switcher
+   convention: yellow mainnet, green testnet, purple signet, grey regtest. */
+.network-picker-option-glyph { flex: 0 0 auto; margin-top: 3px; }
+.network-picker-option-coin { fill: var(--bitcoin); }
+.network-picker-option[data-network="testnet"] .network-picker-option-coin { fill: var(--testnet); }
+.network-picker-option[data-network="signet"] .network-picker-option-coin { fill: var(--signet); }
+.network-picker-option[data-network="regtest"] .network-picker-option-coin { fill: var(--faint); }
+.network-picker-option:hover, .network-picker-option:focus-visible { background: color-mix(in oklab, var(--accent) 14%, var(--surface-2)); outline: none; }
+.network-picker-option[aria-checked="true"] { background: color-mix(in oklab, var(--accent) 20%, var(--surface-2)); }
+.network-picker-option[aria-checked="true"] strong { color: var(--accent); }
+.network-picker-option-text { font-size: 14px; }
+.network-picker-option-desc { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.network-picker-note { margin: 6px 10px 8px; color: var(--faint); font-size: 12px; line-height: 1.45; }
 /* min-width: 0 lets the row shrink on narrow screens rather than pushing the
    controls out of the bar. */
 .download-controls { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; margin-left: auto; min-width: 0; }
@@ -698,10 +766,7 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
    glyphs land a pixel low next to a symmetric icon. This nudge is optical, not
    layout: it moves the ink, not the box. */
 .control-label { position: relative; top: -1px; }
-.download-controls .btn:is(.download-html, .github-repo-link) { flex: 0 0 auto; }
-/* Square it off against the 40px header controls; the shared keyboard-toggle
-   base is 44px wide and stays that way everywhere else in the app. */
-.download-controls .theme-toggle { flex: 0 0 40px; width: 40px; align-self: center; }
+.download-controls .download-html { flex: 0 0 auto; }
 .theme-toggle svg { display: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .theme-toggle[data-theme-mode="dark"] .theme-icon-dark, .theme-toggle[data-theme-mode="light"] .theme-icon-light { display: block; }
 .btn:is(.download-html, .save-recovery-sheet, .save-wallet-dat) {
@@ -713,14 +778,6 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
 }
 .btn:is(.download-html, .save-recovery-sheet, .save-wallet-dat):focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 .github-mark { flex: 0 0 auto; }
-.download-controls .github-repo-link {
-  border-color: color-mix(in oklab, var(--blue) 65%, var(--border));
-  background: color-mix(in oklab, var(--blue) 14%, var(--surface)); color: var(--blue);
-}
-.download-controls .github-repo-link:hover {
-  background: color-mix(in oklab, var(--blue) 23%, var(--surface)); color: var(--fg);
-}
-.download-controls .github-repo-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .custom-select-native {
   position: absolute !important; width: 1px !important; height: 1px !important; min-height: 0 !important;
   margin: 0 !important; padding: 0 !important; opacity: 0; pointer-events: none; overflow: hidden;
@@ -936,7 +993,7 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 .tool-intro[hidden] { display: none; }
 .tool-intro h2 { margin: 5px 0 8px; }
 .tool-intro > .muted { max-width: 760px; margin: 0; }
-.key-lab[hidden], .key-summary[hidden], .msig-lab[hidden] { display: none; }
+.key-lab[hidden], .key-summary[hidden], .msig-lab[hidden], .bip85-bench[hidden] { display: none; }
 #calc-card.is-result-view #modes,
 #calc-card:not(.is-result-view) #out,
 #msig-card:not(.is-result-view) #msig-out { display: none; }
@@ -954,16 +1011,25 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 .key-summary-path { font-family: var(--mono); word-break: break-all; }
 .key-tab-lifehash { width: 22px; height: 22px; border-radius: 4px; image-rendering: pixelated; background: #fff; }
 .key-tab.is-lab { font-weight: 700; }
-.key-tab-lab-icon { width: 18px; height: 22px; padding: 0; color: inherit; }
+.key-tab-lab-icon { width: 16px; height: 16px; padding: 0; color: var(--muted); }
 .key-tab-lab-icon svg { display: block; width: 100%; height: 100%; }
-.key-tab-lab-icon .site-logo-light { display: none; }
-:root[data-theme="light"] .key-tab-lab-icon .site-logo-dark { display: none; }
-:root[data-theme="light"] .key-tab-lab-icon .site-logo-light { display: block; }
 .key-result { margin-top: 16px; }
 .key-result-scripts-label { margin: 0 0 8px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .key-result-main { margin-top: 8px; padding: 16px 16px 20px; border: 1px solid var(--border); border-radius: 20px; background: var(--surface); }
 .key-result .wallet-result-messages { margin: 0 0 16px; }
 .account-receive-section { margin-top: 0; }
+.station-key-source { margin: 0 0 20px; }
+#sp-modes + .station-key-source { margin-top: 20px; }
+.station-key-source > .label { margin: 0 0 8px; }
+.station-key-source > .field-note { display: block; margin: 8px 0 0; }
+.session-key-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.session-key-picker[hidden] { display: none; }
+.session-key-option {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 44px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface-2); color: var(--fg); font-family: var(--mono); font-size: 13px; cursor: pointer;
+}
+.session-key-option.active { border-color: var(--accent); }
 .msig-session-keys { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
 .msig-session-keys[hidden] { display: none; }
 .msig-session-key {
@@ -972,6 +1038,15 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
   background: var(--surface-2); color: var(--fg); font-family: var(--mono); font-size: 13px; cursor: pointer;
 }
 .msig-session-key.active { border-color: var(--accent); color: var(--fg); }
+.msig-key-reuse {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 0;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: color-mix(in oklab, var(--surface-2) 70%, var(--bg));
+}
+.msig-key-reuse[hidden] { display: none; }
+.msig-key-reuse-note { flex: 1 1 100%; margin: 0; }
+.msig-key-reuse-control { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.msig-key-reuse-path { width: 90px; font-family: var(--mono); }
 .msig-key-ident { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
 .msig-key-ident[hidden] { display: none; }
 .msig-key-ident-fp { font-family: var(--mono); font-size: 13px; letter-spacing: 0.04em; }
@@ -998,6 +1073,22 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 .segmented-control > .tab:focus-visible {
   z-index: 2; outline: 2px solid color-mix(in oklab, var(--selection-accent) 72%, var(--fg)); outline-offset: 2px;
 }
+.key-mode-control {
+  width: max-content; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+  overscroll-behavior-inline: contain; scrollbar-width: none; -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+.key-mode-control::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.key-mode-control > .tab {
+  --key-method-card-bg: var(--bg);
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.key-mode-control > .tab:is(.active, [aria-pressed="true"]),
+.key-mode-control > .tab:not(:disabled):active { --key-method-card-bg: var(--selection-accent); }
+.key-method-icon {
+  display: none; flex: 0 0 18px; width: 18px; height: 18px; color: currentColor;
+}
+.key-method-icon svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .segmented-control.is-stacked { flex-direction: column; flex-wrap: nowrap; width: 100%; }
 .segmented-control.is-stacked > .tab { width: 100%; flex: 1 1 auto; }
 .segmented-control.is-stacked > .tab + .tab { margin-block-start: -1px; }
@@ -1005,7 +1096,7 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 .segmented-control.is-stacked > .tab:last-child { border-radius: 0 0 8px 8px; }
 .segmented-control.is-stacked > .tab:only-child { border-radius: 8px; }
 #msig-card[hidden], #calc-card[hidden], #psbt-card[hidden], #psbted-card[hidden], #bip85-card[hidden], #sp-card[hidden] { display: none !important; }
-#calc-card:not([hidden]), #msig-card:not([hidden]) { margin-top: 0; border-radius: 20px; position: relative; z-index: 1; }
+#calc-card:not([hidden]), #msig-card:not([hidden]), #bip85-card:not([hidden]), #sp-card:not([hidden]) { margin-top: 0; border-radius: 0 0 20px 20px; position: relative; z-index: 1; }
 .psbt-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 14px; }
 @media (min-width: 720px) {
   .psbt-grid { grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); }
@@ -1443,7 +1534,7 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
   .msig-threshold-number { flex: 0 0 auto; width: 56px !important; min-width: 56px; height: 40px; min-height: 40px !important; font-size: 16px; }
   .msig-threshold-ticks { font-size: 9px; }
 }
-.psbt-intro { margin: var(--space-control) 0 0; }
+.tool-intro-note { margin: var(--space-control) 0 0; }
 .psbt-grid { margin-top: var(--space-component); }
 .psbt-grid > .field, .psbt-grid > div > .field:first-child { margin-top: 0; }
 .psbt-actions { margin-top: var(--space-component); }
@@ -1459,12 +1550,13 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 .bip85-actions { margin-top: var(--space-component); }
 .bip85-notes { margin: var(--space-component) 0 0; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 #bip85-out { margin-top: var(--space-component); }
+#bip85-card.is-result-view #bip85-out { margin-top: 0; }
 #bip85-out .wallet-private-section { margin-top: 0; }
 #psbt-session { margin: var(--space-control) 0 0; }
-.key-manager { margin: 0 0 16px; position: relative; z-index: 2; }
+.key-manager { margin: 14px 0 -1px; position: relative; z-index: 2; }
 .key-manager-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .key-manager-head h2 { margin: 0; }
-.key-tab-strip { display: flex; align-items: center; min-width: 0; margin-top: 0; gap: 4px; }
+.key-tab-strip { display: flex; align-items: flex-end; min-width: 0; margin-top: 12px; }
 .add-key {
   width: 36px; min-width: 36px; min-height: 44px; padding: 0; border: 0; border-radius: 0;
   background: transparent; box-shadow: none; color: var(--muted); font-size: 28px; line-height: 1; cursor: pointer;
@@ -1472,7 +1564,7 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 .add-key:not(:disabled):hover { background: transparent; color: var(--accent); }
 .add-key:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
 .add-key:not(:disabled):active { background: transparent; color: var(--accent); }
-/* The minus is disabled while a single key or multisig is all there is. It
+/* The minus is disabled while a Station tab is selected. It
    drops to the border tone, which sits close to its ground in either theme,
    and stops answering hover, so nothing about it invites a click. Disabled
    controls are exempt from the contrast floor, and the state is on the
@@ -1499,7 +1591,7 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 }
 @media (prefers-reduced-motion: reduce) { .add-item-tooltip { transition: none; } }
 .key-tabs {
-  display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; height: auto; min-height: 44px; margin-top: 0; position: relative; z-index: 2;
+  display: flex; align-items: flex-end; gap: 0; flex: 1 1 auto; min-width: 0; height: 50px; margin-top: 0; position: relative; z-index: 2;
   overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain;
   scrollbar-width: none; -ms-overflow-style: none; -webkit-overflow-scrolling: touch; cursor: grab;
 }
@@ -1507,15 +1599,19 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 .key-tabs.dragging, .key-tabs.dragging .key-tab { cursor: grabbing; user-select: none; }
 .key-tab {
   position: relative; display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto;
-  width: max-content; max-width: none; min-height: 44px; padding: 6px 12px; white-space: nowrap;
-  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); color: var(--muted); font-weight: 600;
+  width: max-content; max-width: none; min-height: 44px; padding: 0 14px; white-space: nowrap;
+  border: 1px solid transparent; border-radius: 10px 10px 0 0; background: transparent; color: var(--muted);
 }
-.key-tab:not(.active):hover { background: color-mix(in oklab, var(--surface-2) 70%, var(--bg)); color: var(--fg); }
+.key-tab:not(.active):hover { background: color-mix(in oklab, var(--surface-2) 60%, transparent); color: var(--fg); }
+.key-tab:not(.active)::after {
+  content: ""; position: absolute; top: 12px; right: -1px; width: 1px; height: 20px; background: var(--border);
+}
+.key-tab:last-child::after, .key-tab:has(+ .key-tab.active)::after { display: none; }
 .key-tab.active, .key-tab-editing {
-  background: var(--surface); color: var(--fg); border-color: var(--accent);
+  background: var(--surface); color: var(--fg); border-color: var(--border); border-bottom-color: var(--surface);
 }
 .key-tab.is-lab { font-weight: 700; }
-.key-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.key-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .account-tabs {
   display: flex; align-items: flex-end; gap: 0; height: 50px; margin: 14px 0 -1px;
   position: relative; z-index: 2; overflow-x: auto; overflow-y: hidden;
@@ -1633,25 +1729,41 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 @media (max-width: 719px) {
   :root { --site-header-pad: 12px; }
   .control-label { display: none; }
+  /* Icon-only in the row, square against the 40px theme toggle it sits
+     beside: the picker keeps its place among the header controls rather than
+     dropping out of the bar, and the coin's colour still carries the network.
+     .network-picker stays position: relative so the menu anchors to it. */
+  .network-picker { flex: 0 0 40px; }
+  .network-picker-label, .network-picker-chevron { display: none; }
+  .network-picker-button { width: 40px; padding: 0; justify-content: center; }
   /* Short tool names here: the strip is the page's only horizontal scroll, so
      fitting more of it on screen matters more than the fuller wording. */
   .workspace-tab-full { display: none; }
   .workspace-tab-short { display: inline; }
+  /* The five Key Station methods fit as accessible icon buttons at phone
+     widths. Keep them in the same left-to-right order instead of allowing the
+     generic segmented-control fallback to turn them into a tall stack. */
+  .key-mode-control { width: 100%; }
+  .key-mode-control > .tab { flex: 1 0 44px; min-width: 44px; min-height: 44px; padding: 0 10px; }
+  .key-mode-control .key-method-icon { display: inline-flex; }
+  .key-mode-control .key-mode-label { display: none; }
   /* Icon-only: square them off against the 40px theme toggle. */
-  .download-controls .btn:is(.download-html, .github-repo-link) { flex: 0 0 40px; width: 40px; padding: 0; justify-content: center; }
+  .download-controls .download-html { flex: 0 0 40px; width: 40px; padding: 0; justify-content: center; }
+  /* The footer link loses its label with the rest, so it squares off against
+     the 44px toggle beside it rather than keeping a button's side padding. */
+  .page-footer-links .github-repo-link { flex: 0 0 44px; width: 44px; padding: 0; justify-content: center; }
   /* The wordmark gives back the width the icon-only buttons still need. */
   .site-title { font-size: 19px; }
   .download-controls { gap: 6px; }
-  /* Only the version number itself survives on narrow screens. */
-  .site-version-tag { display: none; }
 }
 /* Below the common 412/414px Android widths the lockup is the last thing with
    give left in the bar, the controls being fixed-width icons by now. Taking it
    down a step buys back roughly the width the row is short of at 320px, and
-   costs less than dropping an item. */
+   costs less than dropping an item. The controls close up by 2px here too, the
+   network picker having taken a fourth slot in the row. */
 @media (max-width: 400px) {
   .site-title { font-size: 17px; }
-  .site-version { font-size: 11px; margin-left: 2px; }
+  .download-controls { gap: 4px; }
 }
 @media (max-width: 520px) {
   .key-panel-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
@@ -1677,10 +1789,18 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
 }
 .key-tab-icon { display: inline-flex; flex: 0 0 auto; width: 16px; height: 16px; color: var(--key-color); }
 .key-tab-icon svg { display: block; width: 16px; height: 16px; }
-.key-tab-lab-icon { display: inline-flex; width: 18px; height: 22px; }
+.key-tab-icon.key-tab-lab-icon { display: inline-flex; width: 16px; height: 16px; color: var(--muted); }
 .key-tab-lab-icon svg { width: 100%; height: 100%; }
 .multisig-tab-icon { display: inline-flex; flex: 0 0 auto; width: 28px; height: 23px; margin-left: -5px; }
 .multisig-tab-icon svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.key-tab-icon.key-tab-lab-icon.bench-tab-icon,
+.multisig-tab-icon.bench-tab-icon {
+  flex: 0 0 18px; width: 18px; height: 18px; margin-left: 0; padding: 0; color: var(--muted);
+}
+.bench-tab-icon svg { display: block; width: 100%; height: 100%; overflow: visible; }
+/* The MS ring does not shrink its Station mark: normalize the key cluster to
+   an 18px core. SP deliberately keeps its original compact 18px whole mark. */
+.multisig-tab-icon.bench-tab-icon { flex-basis: 21px; width: 21px; height: 24px; }
 .key-tab-label { display: inline-block; white-space: nowrap; }
 .key-tab-editing { height: 44px; }
 .key-tabs .key-tab-editing input.key-tab-name-input {

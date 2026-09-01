@@ -32,14 +32,20 @@ Official website: [entropylab.online](https://entropylab.online)
   A custom mode accepts an arbitrary-depth BIP32 account path, keeps Bitcoin
   network selection explicit, and appends the selected branch and address
   ranges. Typing `h` or `'` after a preset index enables its Harden control.
-- Supports numeric coin-type and account indexes for single-signature and
-  multisignature derivation. Purpose, coin type, and account indexes are
-  hardened by default; the starting address index is unhardened by default.
-  Each can be changed independently. Coin type 0 uses Bitcoin Mainnet, coin
-  type 1 uses Bitcoin Testnet, and custom indexes retain Mainnet address
-  serialization. Hardened address children require private key material and
-  therefore cannot be derived from multisig co-signer xpubs.
-  PSBT address rendering separately supports Mainnet and Testnet.
+ - Supports numeric coin-type and account indexes for single-signature and
+   multisignature derivation. Purpose, coin type, and account indexes are
+   hardened by default; the starting address index is unhardened by default.
+   Each can be changed independently. Coin type 0 uses Bitcoin Mainnet, coin
+   type 1 uses Bitcoin Testnet, and custom indexes retain Mainnet address
+   serialization. Hardened address children require private key material and
+   therefore cannot be derived from multisig co-signer xpubs.
+   PSBT address rendering separately supports Mainnet and Testnet. A network
+   picker in the header (the Bitcoin-orange coin next to the network name)
+   shows the network every tool is set to and switches it — address formats,
+   extended key versions, WIF prefixes, and coin-type defaults all follow, and
+   each menu entry spells out the checks its choice implies. Nothing connects
+   anywhere: the choice only picks formats, and a tool's own advanced fields
+   can still override it. Every load starts on Mainnet again.
 - Derives watch-only multisignature wallets from extended public keys without
   requiring private keys. Multisig script type and purpose are separate as
   well; conventional script choices restore their standard purpose, while
@@ -335,7 +341,7 @@ To remove generated files, run `npm run clean`.
 │       ├── coders.js         hex/base64 byte coders (no cryptography)
 │       ├── sqlite-writer.js Minimal SQLite database file writer
 │       ├── wallet-export.js Bitcoin Core wallet.dat descriptor export
-│       ├── online.js       Hosted-site behavior and header version label
+│       ├── online.js       Hosted-site online warning
 │       ├── network-check.js Network adapter detection and warning
 │       ├── browser-check.js Startup browser sanity checks and kill-screen
 │       ├── enhanced-inputs.js
