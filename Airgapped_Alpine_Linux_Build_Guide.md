@@ -64,7 +64,6 @@ cd ~/entropylab
 > **STOP: Asset Placement Required**
 > The build automation expects your web application to reside in ~/entropylab/app_assets.
 > You must rename your main HTML file to entropylab.html before moving it into that folder.
-```
 
 ### 3. Minimal Package Fetching
 
