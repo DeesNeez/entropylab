@@ -58,8 +58,7 @@
         <button type="button" class="workspace-tab" role="tab" aria-selected="false" aria-label="BIP-85"><span class="workspace-tab-full">BIP-85</span><span class="workspace-tab-short">BIP85</span></button>
         <button type="button" class="workspace-tab" role="tab" aria-selected="false" aria-label="Multi Signature"><span class="workspace-tab-full">Multi Signature</span><span class="workspace-tab-short">MultiSig</span></button>
         <button type="button" class="workspace-tab" role="tab" aria-selected="false" aria-label="Silent Payments"><span class="workspace-tab-full">Silent Payments</span><span class="workspace-tab-short">SP</span></button>
-        <button type="button" class="workspace-tab" role="tab" aria-selected="false" aria-label="PSBT / Nonce"><span class="workspace-tab-full">PSBT / Nonce</span><span class="workspace-tab-short">PSBT</span></button>
-        <button type="button" class="workspace-tab" role="tab" aria-selected="false" aria-label="PSBT Editor"><span class="workspace-tab-full">PSBT Editor</span><span class="workspace-tab-short">Editor</span></button>
+        <button type="button" class="workspace-tab" role="tab" aria-selected="false" aria-label="PSBT"><span class="workspace-tab-full">PSBT</span><span class="workspace-tab-short">PSBT</span></button>
       </div>
     </nav>
     <div class="workspace-panel" id="workspace-panel">
@@ -476,6 +475,10 @@ words, pick one of the checksum words.</span></span>
       <div id="sp-out" aria-live="polite"></div>
       <p class="muted">Session keys remain in this page only and are never intentionally stored or sent. Memory clearing is best-effort because browsers may retain internal copies; close the page before reconnecting the computer.</p>
     </section>
+    <div class="psbt-tool-tabs segmented-control no-print" id="psbt-tool-tabs" role="tablist" aria-label="PSBT tools" hidden>
+      <button class="tab active" id="psbt-nonce-tab" type="button" role="tab" aria-selected="true" aria-controls="psbt-card" data-psbt-tool="nonce">PSBT / Nonce</button>
+      <button class="tab" id="psbt-editor-tab" type="button" role="tab" aria-selected="false" aria-controls="psbted-card" data-psbt-tool="editor">PSBT Editor</button>
+    </div>
     <div class="tool-intro" id="psbt-tool-intro" hidden>
         <div class="kicker">Inspect first. Sign elsewhere.</div>
         <h2>Read a PSBT or a signed transaction.</h2>

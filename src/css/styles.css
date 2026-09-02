@@ -788,7 +788,10 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
    (44px minimum, control margin, mono face) would bulge out of the 52px bar.
    In the header the generated control wears the header-button sizing instead. */
 .locale-control .custom-select { flex: 0 0 auto; width: auto; margin-top: 0; font-family: inherit; font-size: 14px; }
-.locale-control .custom-select-button { min-height: 40px; padding: 0 8px; border-radius: 8px; gap: 6px; font-weight: 600; letter-spacing: 0.04em; }
+.locale-control .custom-select-button {
+  min-height: 40px; padding: 0 12px; border-radius: 8px; gap: 7px;
+  background: var(--surface-2); color: var(--fg); font-weight: 600; letter-spacing: 0.04em;
+}
 .theme-toggle svg { display: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .theme-toggle[data-theme-mode="dark"] .theme-icon-dark, .theme-toggle[data-theme-mode="light"] .theme-icon-light { display: block; }
 .btn:is(.download-html, .save-recovery-sheet, .save-wallet-dat) {
@@ -811,7 +814,11 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
   background: var(--bg); color: var(--fg); text-align: left; cursor: pointer;
 }
 .custom-select-button:hover, .custom-select.open .custom-select-button { border-color: var(--accent); }
-.custom-select-chevron { color: var(--accent); font-size: 12px; transition: transform 120ms ease; }
+.custom-select-chevron {
+  display: block; flex: 0 0 auto; width: 12px; height: 12px;
+  fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;
+  color: var(--accent); transition: transform 120ms ease;
+}
 .custom-select.open .custom-select-chevron { transform: rotate(180deg); }
 .custom-select-list {
   position: absolute; z-index: 100; top: calc(100% + 6px); left: 0; right: 0; max-height: 260px;
@@ -1082,6 +1089,8 @@ input.bad, textarea.bad { border-color: var(--danger) !important; }
    brings its own 16px top margin (they collapsed to one 16px before), so the
    only thing this drops is the gap left above the panel's bottom padding. */
 .workspace-panel .card { margin-bottom: 0; }
+.psbt-tool-tabs { margin: 0 0 var(--space-component); }
+.psbt-tool-tabs[hidden] { display: none; }
 .segmented-control {
   display: flex; align-items: stretch; flex-wrap: wrap; gap: 0; max-width: 100%; isolation: isolate;
 }
