@@ -502,7 +502,7 @@ hodlRootEl.innerHTML = `
       <div class="tool-intro" id="calc-tool-intro">
         <div class="kicker">Your entropy enters the lab</div>
         <h2>Create. Derive. Verify.</h2>
-        <p class="muted calc-intro">Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+        <p class="muted calc-intro">Turn entropy you bring \u2014 dice rolls, playing cards, a number in any base, a seed phrase, or a private key \u2014 into a BIP-39 seed, then derive its master fingerprint, extended public keys, and receive addresses. The dice methods match COLDCARD, SeedSigner, Keystone, and BitBox, so the same rolls reproduce the same seed on those signers. This does not invent entropy \u2014 it is a calculator, and nothing leaves this page.</p>
       </div>
       <section class="key-manager no-print" id="key-manager">
       <div class="key-tab-strip"><div class="key-tabs" id="key-tabs" role="tablist" aria-label="Keys"></div><div class="add-item-control"><button class="add-key" id="add-key" type="button" aria-label="Open Key Station to derive another key" aria-describedby="add-key-tooltip">+</button><span class="add-item-tooltip" id="add-key-tooltip" role="tooltip">Open Key Station to derive another key</span></div><div class="add-item-control"><button class="add-key remove-key" id="delete-key" type="button" aria-label="Delete current key" aria-describedby="delete-key-tooltip" disabled>−</button><span class="add-item-tooltip" id="delete-key-tooltip" role="tooltip">Delete this key</span></div></div>

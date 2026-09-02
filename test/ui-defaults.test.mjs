@@ -1364,6 +1364,12 @@ test("the site header is fixed, carries the logo, and holds the version, downloa
   // Every header control is one height, and the bar is sized to match it.
   assert.match(css, /\.header-button \{ min-height: 40px; font-size: 14px; \}/);
   assert.match(css, /--site-header-height: 52px;/);
+  // enhanced-inputs.js swaps the language select for a custom listbox; the
+  // generated control keeps the bar's 40px chrome and sans face instead of
+  // the form control's 44px minimum, control margin, and mono face, which
+  // bulged out of the 52px bar.
+  assert.match(css, /\.locale-control \.custom-select \{[^}]*margin-top: 0;[^}]*font-family: inherit;[^}]*font-size: 14px;/s);
+  assert.match(css, /\.locale-control \.custom-select-button \{[^}]*min-height: 40px;[^}]*border-radius: 8px;/s);
 });
 
 test("the header logo is inlined for both themes and never fetched from assets", () => {
@@ -1408,6 +1414,15 @@ test("the marketing card states its pitch as a list rather than a paragraph", ()
   // The list stands in for a paragraph, so it carries the space a paragraph
   // would have above it and leaves the card's padding to close it out.
   assert.match(css, /\.pitch-list \{ display: grid; gap: 7px; margin: var\(--space-component\) 0 0; padding-left: 20px; \}/);
+});
+
+test("the Keys tool intro tells what the calculator does, like the other tool intros", () => {
+  for (const markup of [template, appSource]) {
+    // No placeholder copy rides the page's first tool intro.
+    assert.doesNotMatch(markup, /lorem ipsum/i);
+    assert.match(markup, /<p class="muted calc-intro">Turn entropy you bring (?:—|\\u2014) dice rolls, playing cards, a number in any base, a seed phrase, or a private key/);
+    assert.match(markup, /This does not invent entropy (?:—|\\u2014) it is a calculator, and nothing leaves this page\.<\/p>/);
+  }
 });
 
 test("the favicon ships inside the document instead of the assets directory", () => {
