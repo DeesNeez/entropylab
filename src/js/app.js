@@ -881,6 +881,10 @@ hodlRootEl.innerHTML = `
       <div id="sp-out" aria-live="polite"></div>
       <p class="muted">Session keys remain in this page only and are never intentionally stored or sent. Memory clearing is best-effort because browsers may retain internal copies; close the page before reconnecting the computer.</p>
     </section>
+    <div class="psbt-tool-tabs segmented-control no-print" id="psbt-tool-tabs" role="tablist" aria-label="PSBT tools" hidden>
+      <button class="tab active" id="psbt-nonce-tab" type="button" role="tab" aria-selected="true" aria-controls="psbt-card" data-psbt-tool="nonce" data-i18n="workspace.psbtNonce">PSBT / Nonce</button>
+      <button class="tab" id="psbt-editor-tab" type="button" role="tab" aria-selected="false" aria-controls="psbted-card" data-psbt-tool="editor" data-i18n="workspace.psbted">PSBT Editor</button>
+    </div>
     <div class="tool-intro" id="psbt-tool-intro" hidden>
         <div class="kicker">Inspect first. Sign elsewhere.</div>
         <h2>Read a PSBT or a signed transaction.</h2>
@@ -11038,15 +11042,14 @@ function hodlShowWorkspace(id) {
   document.getElementById("sp-manager").hidden = id !== "sp";
   document.getElementById("calc-card").hidden = true;
   document.getElementById("msig-card").hidden = true;
-  document.getElementById("psbt-card").hidden = id !== "psbt";
-  document.getElementById("psbted-card").hidden = id !== "psbted";
   document.getElementById("bip85-card").hidden = id !== "bip85";
   document.getElementById("sp-card").hidden = id !== "sp";
   // The context block sits outside its tool's card, so it is shown and hidden
   // with the card rather than by it.
-  ["psbt", "psbted", "bip85", "sp", "msig", "calc"].forEach((tool) => {
+  ["bip85", "sp", "msig", "calc"].forEach((tool) => {
     document.getElementById(`${tool}-tool-intro`).hidden = id !== tool;
   });
+  hodlSyncPsbtTool();
   hodlWalletResult = null;
   hodlRevealPrivate = false;
   hodlOutEl.innerHTML = "";
@@ -11160,7 +11163,46 @@ function hodlInitDefaultTabStates() {
 }
 // Each tool carries a full name and a short one. Narrow screens show the
 // short form so more tools stay on screen instead of off the right edge.
-var hodlWorkspaceTabs = [["calc", "workspace.key", "workspace.keyShort"], ["bip85", "workspace.bip85", "workspace.bip85Short"], ["msig", "workspace.msig", "workspace.msigShort"], ["sp", "workspace.sp", "workspace.spShort"], ["psbt", "workspace.psbt", "workspace.psbtShort"], ["psbted", "workspace.psbted", "workspace.psbtedShort"]];
+var hodlWorkspaceTabs = [["calc", "workspace.key", "workspace.keyShort"], ["bip85", "workspace.bip85", "workspace.bip85Short"], ["msig", "workspace.msig", "workspace.msigShort"], ["sp", "workspace.sp", "workspace.spShort"], ["psbt", "workspace.psbt", "workspace.psbtShort"]];
+var hodlPsbtTool = "nonce";
+function hodlSyncPsbtTool() {
+  let visible = hodlWorkspace === "psbt", tabs = document.getElementById("psbt-tool-tabs");
+  if (tabs) {
+    tabs.hidden = !visible;
+    tabs.querySelectorAll("[data-psbt-tool]").forEach((button) => {
+      let active = button.dataset.psbtTool === hodlPsbtTool;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", String(active));
+      button.tabIndex = active ? 0 : -1;
+    });
+  }
+  document.getElementById("psbt-tool-intro").hidden = !visible || hodlPsbtTool !== "nonce";
+  document.getElementById("psbt-card").hidden = !visible || hodlPsbtTool !== "nonce";
+  document.getElementById("psbted-tool-intro").hidden = !visible || hodlPsbtTool !== "editor";
+  document.getElementById("psbted-card").hidden = !visible || hodlPsbtTool !== "editor";
+}
+function hodlShowPsbtTool(id, focus = false) {
+  hodlPsbtTool = id === "editor" ? "editor" : "nonce";
+  hodlSyncPsbtTool();
+  if (focus) document.querySelector(`#psbt-tool-tabs [data-psbt-tool="${hodlPsbtTool}"]`)?.focus();
+}
+function hodlInitPsbtToolTabs() {
+  let buttons = [...document.querySelectorAll("#psbt-tool-tabs [data-psbt-tool]")];
+  buttons.forEach((button, index) => {
+    button.onclick = () => hodlShowPsbtTool(button.dataset.psbtTool);
+    button.onkeydown = (event) => {
+      let next = null;
+      if (event.key === "ArrowRight") next = (index + 1) % buttons.length;
+      else if (event.key === "ArrowLeft") next = (index - 1 + buttons.length) % buttons.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = buttons.length - 1;
+      if (next === null) return;
+      event.preventDefault();
+      hodlShowPsbtTool(buttons[next].dataset.psbtTool, true);
+    };
+  });
+  hodlSyncPsbtTool();
+}
 // The switcher keeps every tool on screen as a folder-tab strip that scrolls
 // when it must, in the shape the Keys section uses for its own tabs.
 function hodlWorkspaceTabKeydown(event, index) {
@@ -11232,6 +11274,7 @@ function hodlInitWorkspace() {
   strip.addEventListener("scroll", hodlSyncWorkspaceOverflow, { passive: true });
   addEventListener("resize", hodlSyncWorkspaceOverflow);
   new ResizeObserver(hodlSyncWorkspaceOverflow).observe(strip);
+  hodlInitPsbtToolTabs();
   hodlInitMsig();
   hodlInitPsbt();
   initPsbtEditor();
