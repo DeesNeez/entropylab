@@ -1484,6 +1484,8 @@ test("D++ uses the published hexadecimal D16 transcript without a notation toggl
   assert.match(en["dice.label.dplus"], /^D\+\+ rolls \(D8, D16, D16; then/);
   assert.doesNotMatch(en["dice.label.dplus"], /D8 1–8, D16 0–F/);
   assert.doesNotMatch(appSource, /D\+\+ rolls \(D8 1\\u20138, D16 0\\u2013F/);
+  assert.match(appSource, /accessibleRange\.className = "sr-only";\s*accessibleRange\.textContent = rollRange;/);
+  assert.doesNotMatch(appSource, /meta\.append\(document\.createTextNode\(" \\xB7 "\), emphasis, document\.createTextNode\(rollRange\)\)/);
   assert.match(appSource, /D8 labeled 1\\u20138 and two hexadecimal D16 dice labeled 0\\u2013F/);
   assert.match(appSource, /hodlT\("dice.help.dplus"/);
   assert.doesNotMatch(appSource, /data-dplus-die|hodlDPlusNumberedD16|dplusNumberedD16|Decimal D16/);

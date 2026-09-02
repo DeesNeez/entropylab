@@ -5892,7 +5892,10 @@ function hodlUpdateDice() {
     if (rollPhrase) {
       let emphasis = document.createElement("strong");
       emphasis.textContent = rollPhrase;
-      meta.append(document.createTextNode(" \xB7 "), emphasis, document.createTextNode(rollRange))
+      let accessibleRange = document.createElement("span");
+      accessibleRange.className = "sr-only";
+      accessibleRange.textContent = rollRange;
+      meta.append(document.createTextNode(" \xB7 "), emphasis, accessibleRange)
     }
     meta.append(document.createTextNode(statusTail + invalidStatus));
     meta.className = "muted" + (complete && !result.invalidCount ? " ok" : result.invalidCount ? " err" : "");
