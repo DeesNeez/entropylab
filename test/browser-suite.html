@@ -890,6 +890,10 @@
       const psbtTabs = [...document.querySelectorAll("#psbt-tool-tabs [data-psbt-tool]")];
       equal(psbtTabs.length, 2, "PSBT should expose exactly two internal tabs");
       equal(psbtTabs.map((tab) => tab.textContent.trim()).join("|"), "PSBT / Nonce|PSBT Editor");
+      const psbtManager = document.getElementById("psbt-manager");
+      assert(psbtManager && !psbtManager.hidden, "PSBT station tabs should be visible inside the PSBT tool");
+      psbtTabs.forEach((tab) => assert(tab.classList.contains("key-tab"), "PSBT stations should use folder-style Key Station tabs"));
+      equal(getComputedStyle(document.getElementById("psbt-card")).borderTopLeftRadius, "0px", "The active PSBT station card should join its folder tab");
       psbtTabs[0].focus();
       psbtTabs[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
       await until(() => !document.getElementById("psbted-card").hidden, "ArrowRight to open PSBT Editor");
