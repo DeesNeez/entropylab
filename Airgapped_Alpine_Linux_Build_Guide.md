@@ -2,7 +2,7 @@
 
 **Hardened RAM-Only OS for Raspberry Pi 4/5**
 
-This guide provides a professional workflow for creating a bootable, air-gapped image that only loads the `entropylab.html` application. This build is optimized for creation on an M-Series Apple Mac.
+This guide provides a workflow for creating a bootable drive or image that only loads the `entropylab.html` application using Alpine Linux and Chromium. This build is optimized for creation on an M-Series Apple Mac.
 
 > [!CAUTION]
 > **Hardware Requirement:** This diskless build requires a Raspberry Pi 4 or 5 with **at least 2GB of RAM**. Because the entire operating system and package set are loaded into a RAM disk (`tmpfs`) during boot, 1GB models will likely encounter Out-of-Memory (OOM) errors and fail to boot.
@@ -62,10 +62,12 @@ cd ~/entropylab
 
 > [!CAUTION]
 > **STOP: Asset Placement Required**
-> The build automation expects your web application to reside in ~/entropylab/app_assets.
+> The build automation expects the entropylab.html file to reside in ~/entropylab/app_assets.
 > You must rename your main HTML file to entropylab.html before moving it into that folder.
 
 ### 3. Minimal Package Fetching
+
+This fetches the packages needed to build the image.
 
 **IMPORTANT:** You must open the **OrbStack** application from your Applications folder and ensure the engine is "Running" before executing this step.
 
@@ -87,7 +89,7 @@ docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh
 ### 4. The Hardened Overlay (apkovl)
 
 **4.1 Privilege Separation Setup**
-We prepare the home directory structure. We do **not** write to `/etc/passwd` directly, as this will break Alpine's boot sequence. The user will be created dynamically by our service script upon boot.
+This prepares the home directory structure. The user `entropylab` will be created dynamically by a service script upon boot.
 
 ```zsh
 mkdir -p ovl_root/home/entropylab
@@ -145,7 +147,7 @@ chmod +x ovl_root/usr/local/bin/auto-mount.sh
 ```
 
 **4.3 Assets & Service Config**
-Instead of using unsafe browser flags for local files, we serve them over a read-only local web server.
+This creates a read-only local website to load local assets.
 
 ```zsh
 # Copy assets and set permissions so 'nobody' user can serve them
@@ -228,6 +230,8 @@ tar -czf boot/localhost.apkovl.tar.gz -C ovl_root .
 
 ### 5. Kernel & Firmware Lockdown
 
+This removes and disables network drivers, devices, and the kernel IP stack.
+
 **5.1 Kernel Download & Physical Driver Scrubbing**
 
 ```zsh
@@ -272,7 +276,6 @@ diskutil eject /Volumes/ENTROPYLAB
 ```
 
 **Option B: Generate Distributable .img File**
-*This uses `mtools` instead of loop mounting, making the containerization perfectly reliable and significantly faster on macOS.*
 
 ```zsh
 docker run --rm -v $(pwd):/work -w /work --platform linux/arm64 alpine:latest sh -c "
