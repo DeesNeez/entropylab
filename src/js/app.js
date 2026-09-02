@@ -23,7 +23,7 @@ import { parseRawTx, extractEcdsaSignatures, inscriptionHints, isPsbtMagic, seri
 import { wasmExports as hodlWasm, withInput as hodlWasmIn, withOutput as hodlWasmOut } from "./entropylab-wasm.js";
 import { indexHdKey, indexSingleKey, matchOwnership, pathLabel } from "./ownership.js";
 import { hex as hodlHex } from "./coders.js";
-import { addressFor, addressFromScript, multisigScript, multisigTrScript, p2shP2wpkhScript, p2shScript, p2trKeyScript, p2trLeafScript, p2wshScript } from "./addresses.js";
+import { addressFor, addressFromScript, descriptorDerive, p2shP2wpkhScript, p2shScript, p2trKeyScript, p2wshScript } from "./addresses.js";
 import { base58checkDecode, base58checkEncode } from "./base58.js";
 import { HDKey as hodlHDKey } from "./hdkey.js";
 import { entropyToMnemonic as hodlEntropyToMnemonic, mnemonicToEntropy as hodlMnemonicToEntropy, mnemonicToSeedSync as hodlMnemonicToSeed, validateMnemonic as hodlIsValidMnemonic } from "./bip39.js";
@@ -458,7 +458,7 @@ hodlRootEl.innerHTML = `
       <div class="key-tab-strip"><div class="key-tabs" id="key-tabs" role="tablist" aria-label="Keys"></div><div class="add-item-control"><button class="add-key" id="add-key" type="button" aria-label="Open Key Station to derive another key" aria-describedby="add-key-tooltip">+</button><span class="add-item-tooltip" id="add-key-tooltip" role="tooltip">Open Key Station to derive another key</span></div><div class="add-item-control"><button class="add-key remove-key" id="delete-key" type="button" aria-label="Delete current key" aria-describedby="delete-key-tooltip" disabled>−</button><span class="add-item-tooltip" id="delete-key-tooltip" role="tooltip">Delete this key</span></div></div>
     </section>
     <section class="card no-print" id="calc-card" role="tabpanel" hidden>
-      <div class="row segmented-control key-mode-control" id="modes" role="group" aria-label="Key input mode"></div>
+      <div class="key-mode-select" id="modes"><p class="label" id="key-method-label">Method</p></div>
       <div class="key-summary" id="key-summary" hidden>
         <img class="key-summary-lifehash" id="key-summary-lifehash" width="48" height="48" alt="" hidden>
         <div class="key-summary-text">
@@ -473,12 +473,8 @@ hodlRootEl.innerHTML = `
       <div class="global-sync-host" id="global-sync-host"></div>
       <section class="seed-length-control" id="seed-length" aria-labelledby="seed-length-label">
         <p class="label" id="seed-length-label">Seed phrase length</p>
-        <div class="row seed-length-options segmented-control" role="group" aria-label="Seed phrase length">
-          <button type="button" class="tab" data-seed-words="12" aria-pressed="false">12 words</button>
-          <button type="button" class="tab" data-seed-words="15" aria-pressed="false">15 words</button>
-          <button type="button" class="tab" data-seed-words="18" aria-pressed="false">18 words</button>
-          <button type="button" class="tab" data-seed-words="21" aria-pressed="false">21 words</button>
-          <button type="button" class="tab active" data-seed-words="24" aria-pressed="true">24 words</button>
+        <div class="seed-length-select">
+          <select id="seed-length-select" aria-labelledby="seed-length-label"><option value="12">12 words</option><option value="15">15 words</option><option value="18">18 words</option><option value="21">21 words</option><option value="24" selected="selected">24 words</option></select>
         </div>
         <p class="muted" id="seed-length-help">24 words use 256 bits of BIP39 entropy.</p>
       </section>
@@ -635,7 +631,7 @@ hodlRootEl.innerHTML = `
       <div class="tool-intro" id="msig-tool-intro" hidden>
         <div class="kicker">Multiple keys, one wallet</div>
         <h2>Derive a multisig wallet</h2>
-        <p class="muted msig-intro">Combine extended public keys into a multisignature wallet. Paste each key origin and extended public key as exported by its signer: <span class="mono">[fingerprint/48h/0h/0h/2h]xpub\u2026</span>. Private keys are not needed. The derived addresses can receive bitcoin, and spending requires the configured number of signatures.</p>
+        <p class="muted msig-intro">Combine extended public keys into a multisignature wallet. Paste each key origin and extended public key as exported by its signer: <span class="mono">[fingerprint/48h/0h/0h/2h]xpub\u2026</span>. A trailing branch step such as <span class="mono">/0/*</span> is accepted and ignored — the receive/change branches and address indexes are derived for you. A longer trailing path such as <span class="mono">/0/20</span> or <span class="mono">/0/0/20/*</span> is honored as descriptor key derivation in full: the co-signer's public keys derive through it, and the exported descriptor carries it before the branch step. Private keys are not needed. The derived addresses can receive bitcoin, and spending requires the configured number of signatures.</p>
       </div>
       <section class="key-manager no-print" id="msig-manager" hidden>
       <div class="key-tab-strip"><div class="key-tabs" id="msig-tabs" role="tablist" aria-label="Multisigs"></div><div class="add-item-control"><button class="add-key" id="add-msig" type="button" aria-label="Open MS Station to derive another multisig" aria-describedby="add-msig-tooltip">+</button><span class="add-item-tooltip" id="add-msig-tooltip" role="tooltip">Open MS Station</span></div><div class="add-item-control"><button class="add-key remove-key" id="delete-msig" type="button" aria-label="Delete current multisig" aria-describedby="delete-msig-tooltip" disabled>−</button><span class="add-item-tooltip" id="delete-msig-tooltip" role="tooltip">Delete this multisig</span></div></div>
@@ -650,6 +646,16 @@ hodlRootEl.innerHTML = `
         <button class="btn secondary" id="msig-edit-inputs" type="button">Edit input</button>
       </div>
       <div class="msig-lab" id="msig-lab">
+      <div class="station-key-source msig-station-key-source">
+        <p class="label">Bring in a key from Key Station</p>
+        <div class="session-key-picker" id="msig-session-keys" role="group" aria-label="Compatible Key Station keys" hidden></div>
+        <p class="field-note">Choose a compatible HD-root key from this session, or paste a co-signer extended public key below.</p>
+        <label class="choice msig-key-reuse-toggle">
+          <input id="msig-reuse-session-keys" type="checkbox">
+          <span><strong>Allow key reuse</strong><span class="desc">Keep selected Key Station keys available for more than one co-signer input. Reused keys need different derivation paths.</span></span>
+        </label>
+        <p class="field-note" id="msig-session-key-status" aria-live="polite"></p>
+      </div>
       <div class="msig-threshold-labels">
         <label for="msig-m-number"><span>Signatures needed to spend (m)</span><input class="msig-threshold-number" id="msig-m-number" type="number" min="1" max="15" step="1" value="2" inputmode="numeric" aria-describedby="msig-threshold-help"></label>
         <label for="msig-n-number"><span>Total signing keys (n)</span><input class="msig-threshold-number" id="msig-n-number" type="number" min="1" max="15" step="1" value="3" inputmode="numeric" aria-describedby="msig-threshold-help"></label>
@@ -931,23 +937,33 @@ function hodlCreateKeyMethodIcon(mode) {
   span.appendChild(svg);
   return span;
 }
-hodlKeyModes.forEach((e) => {
-  let t = document.createElement("button"), label = document.createElement("span"), active = e === hodlKeyMode;
-  t.type = "button";
-  t.className = "tab" + (active ? " active" : "");
-  t.dataset.keyMode = e;
-  t.setAttribute("aria-pressed", String(active));
-  t.setAttribute("aria-label", hodlKeyModeLabels[e]);
-  t.title = hodlKeyModeLabels[e];
-  label.className = "key-mode-label";
-  label.textContent = hodlKeyModeLabels[e];
-  t.append(hodlCreateKeyMethodIcon(e), label);
-  t.onclick = () => hodlSetMode(e);
-  hodlModesEl.appendChild(t);
+// The method picker is a dropdown at every width, wearing the Script type
+// control's chrome: enhanced-inputs.js upgrades it and asks
+// entropylabOptionIcon for each method's mark.
+var hodlKeyModeSelectEl = document.createElement("select");
+hodlKeyModeSelectEl.id = "key-mode-select";
+hodlKeyModeSelectEl.setAttribute("aria-labelledby", "key-method-label");
+hodlKeyModes.forEach((mode) => {
+  let option = document.createElement("option");
+  option.value = mode;
+  option.textContent = hodlKeyModeLabels[mode];
+  option.selected = mode === hodlKeyMode;
+  hodlKeyModeSelectEl.appendChild(option);
 });
-document.querySelectorAll("#seed-length [data-seed-words]").forEach((button) => {
-  button.onclick = () => hodlSetSeedLength(Number(button.dataset.seedWords));
-});
+hodlKeyModeSelectEl.entropylabOptionIcon = (value) => hodlCreateKeyMethodIcon(value);
+hodlKeyModeSelectEl.onchange = () => {
+  if (hodlKeyModeSelectEl.value !== hodlKeyMode) hodlSetMode(hodlKeyModeSelectEl.value);
+};
+hodlModesEl.appendChild(hodlKeyModeSelectEl);
+// Every path that changes the method moves the control with it. Sync, not
+// change: change would come straight back through onchange.
+function hodlSyncKeyModeSelect() {
+  if (hodlKeyModeSelectEl.value === hodlKeyMode) return;
+  hodlKeyModeSelectEl.value = hodlKeyMode;
+  hodlKeyModeSelectEl.dispatchEvent(new Event("entropylab:sync-select"));
+}
+var hodlSeedLengthSelectEl = hodlElement("#seed-length-select");
+hodlSeedLengthSelectEl.onchange = () => hodlSetSeedLength(Number(hodlSeedLengthSelectEl.value));
 hodlElement("#go").onclick = () => hodlHandleDerivationButton("key", hodlCalculateKey);
 hodlElement("#wipe").onclick = hodlWipeActiveKey;
 function hodlElement(e) {
@@ -5044,7 +5060,10 @@ function hodlGlobalSyncFromCurrentInput() {
   return true;
 }
 function hodlGlobalSyncControlMarkup(state) {
-  return `<div class="global-sync-row"><label class="seed-autocomplete-toggle global-sync-toggle"><input type="checkbox" id="global-entropy-sync" ${state?.globalSync ? "checked" : ""} /><span><strong>Sync entropy across methods</strong> <span class="seed-autocomplete-note">(Keeps non-hashed methods synchronized. Hashed inputs update them one way and are never overwritten.)</span></span></label><span class="global-sync-status" id="global-sync-status" aria-live="polite" ${state?.globalSync && state?.globalSyncBitCount ? "" : "hidden"}>${hodlCopiedIconMarkup()}<span>${state?.globalSyncBitCount || 0} bits synced</span></span></div>`;
+  // Two rows: the switch and its title, then the explanation beneath. The
+  // explanation describes the checkbox rather than naming it, so it stays out
+  // of the accessible name and stays reachable through aria-describedby.
+  return `<div class="global-sync-row"><div class="global-sync-head"><label class="seed-autocomplete-toggle global-sync-toggle"><input type="checkbox" id="global-entropy-sync" aria-describedby="global-sync-note" ${state?.globalSync ? "checked" : ""} /><span class="label">Sync entropy across methods</span></label><span class="global-sync-status" id="global-sync-status" aria-live="polite" ${state?.globalSync && state?.globalSyncBitCount ? "" : "hidden"}>${hodlCopiedIconMarkup()}<span>${state?.globalSyncBitCount || 0} bits synced</span></span></div><p class="seed-autocomplete-note global-sync-note" id="global-sync-note">(Keeps non-hashed methods synchronized. Hashed inputs update them one way and are never overwritten.)</p></div>`;
 }
 function hodlRenderGlobalSyncControl() {
   let host = document.getElementById("global-sync-host"), state = hodlKeys[hodlActiveKey];
@@ -5226,11 +5245,11 @@ function hodlUpdateSeedLengthControl() {
   if (!section) return;
   let config = hodlSeedConfig();
   section.hidden = hodlKeyMode === "key";
-  section.querySelectorAll("[data-seed-words]").forEach((button) => {
-    let active = Number(button.dataset.seedWords) === config.words;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
+  // Sync, not change: change would come straight back through onchange.
+  if (hodlSeedLengthSelectEl.value !== String(config.words)) {
+    hodlSeedLengthSelectEl.value = String(config.words);
+    hodlSeedLengthSelectEl.dispatchEvent(new Event("entropylab:sync-select"));
+  }
   let help = document.getElementById("seed-length-help");
   if (!help) return;
   if (hodlKeyMode === "hex") {
@@ -6263,7 +6282,7 @@ function hodlInitMasterFingerprintPreview() {
     hodlQueueMasterFingerprintPreview();
   });
   panel.addEventListener("click", event => {
-    let target = event.target instanceof Element ? event.target.closest("#modes button, [data-seed-words], [data-d], [data-lw], [data-card-suit], [data-card-rank], [data-direct-card-rank], #card-undo") : null;
+    let target = event.target instanceof Element ? event.target.closest("#modes .custom-select-option, #seed-length .custom-select-option, [data-d], [data-lw], [data-card-suit], [data-card-rank], [data-direct-card-rank], #card-undo") : null;
     if (!target) return;
     // Pads and pickers that mutate an input without a bubbling "input" event
     // still re-run the sync: [data-d] writes the dice textarea directly,
@@ -6429,7 +6448,11 @@ function hodlAssertPrivateKeyKind(value, network, kind, trimBrainWallet = false)
   return candidate;
 }
 function hodlFilterXpub(e) {
-  return String(e ?? "").replace(/[^A-Za-z0-9[\]/']/g, "");
+  // < > ; are kept so a pasted multipath step (<0;1>) reaches the parser
+  // intact — stripping them would mangle /<0;1> into /01, and with trailing
+  // paths honored the mangled digits would silently derive through a
+  // made-up numeric path instead of reading as the branch position.
+  return String(e ?? "").replace(/[^A-Za-z0-9[\]/'*<>;]/g, "");
 }
 function hodlNormalizeOriginPath(path) {
   return String(path ?? "").trim().replace(/^m\//i, "").replace(/'/g, "h").replace(/H/g, "h");
@@ -6438,11 +6461,40 @@ function hodlParseKeyOrigin(raw) {
   let input = String(raw ?? "").trim();
   let match = input.match(/^\[([0-9a-fA-F]{8})\/([0-9A-Za-z/']+)\](.+)$/);
   if (!match) return { origin: null, key: input };
-  let fingerprint = match[1].toLowerCase(), path = hodlNormalizeOriginPath(match[2]), rest = String(match[3] || "").trim().replace(/\/(?:<\d+(?:;\d+)*>|\d+)\/\*$/, "");
-  // A trailing path after the extended key (xpub…/1) is descriptor key
-  // derivation: the co-signer's public keys are derived through it, so one
-  // account key can serve again under a different path.
-  let suffix = rest.match(/^(.*?)((?:\/\d+[hH']?)+)$/), key = suffix ? suffix[1] : rest, derivationPath = suffix ? hodlNormalizeOriginPath(suffix[2]).replace(/^\//, "") : "";
+  let fingerprint = match[1].toLowerCase(), path = hodlNormalizeOriginPath(match[2]), rest = String(match[3] || "").trim().replace(/\/+$/, "");
+  // The extended key carries no "/", so the first slash splits the key from
+  // a trailing descriptor key-expression path. The path is honored in full:
+  // the co-signer's public keys derive through it, so one account key can
+  // serve again under a different path, and a deep signer export keeps every
+  // step — xpub…/0/0/20/* exports as xpub…/0/0/20/<0;1>/* (a multipath step
+  // is legal at any position, BIP389). The only decoration is the branch
+  // marker itself: a sole numeric step ahead of the wildcard (/0/*), the
+  // multipath form (/<0;1>/*), and the BIP45 cosigner step.
+  let slash = rest.indexOf("/"), key = slash < 0 ? rest : rest.slice(0, slash);
+  let tokens = slash < 0 ? [] : rest.slice(slash + 1).split("/").filter((token) => token !== "");
+  for (let token of tokens) {
+    if (!/^(?:\*|<\d+(?:;\d+)*>|\d+[hH']?)$/.test(token)) throw new Error("Trailing path steps must be numbers, a wildcard *, or a multipath step like <0;1>.");
+  }
+  if (tokens.includes("*") && tokens[tokens.length - 1] !== "*") throw new Error("A wildcard * is only allowed as the last trailing path step.");
+  let hadWildcard = tokens[tokens.length - 1] === "*";
+  if (hadWildcard) tokens.pop();
+  // BIP45 account keys carry their cosigner branch (always 0 here) as the
+  // first trailing step; the descriptor compose re-adds it, so it is
+  // decoration like the branch marker.
+  if (/^45h?$/.test(path.split("/")[0] || "") && tokens.length && /^\d+[hH']?$/.test(tokens[0])) tokens.shift();
+  if (tokens.filter((token) => token.startsWith("<")).length > 1) throw new Error("Only one multipath step like <0;1> is supported in a trailing path.");
+  let multipathAt = tokens.findIndex((token) => token.startsWith("<"));
+  if (multipathAt > 0 && tokens.slice(0, multipathAt).some((token) => !/^\d+[hH']?$/.test(token))) throw new Error("A multipath step like <0;1> must follow plain number steps.");
+  if (multipathAt >= 0 && multipathAt !== tokens.length - 1) throw new Error("A multipath step like <0;1> must be the last trailing path step.");
+  // Steps ahead of a multipath step are honored; the multipath step itself
+  // is the branch position. Without one, a sole step ahead of the wildcard
+  // is the branch marker and every other shape is honored as written.
+  let honoredTokens = multipathAt >= 0 ? tokens.slice(0, multipathAt) : hadWildcard && tokens.length === 1 ? [] : tokens;
+  let derivationPath = honoredTokens.map((token) => {
+    let step = token.match(/^(\d+)([hH']?)$/); // shape guaranteed by the validation above
+    let index = Number(step[1]);
+    return (Number.isSafeInteger(index) ? String(index) : step[1]) + (step[2] ? "h" : "");
+  }).join("/");
   if (fingerprint === "00000000") throw new Error("Key origin fingerprint 00000000 is not a real master fingerprint.");
   if (!/^(?:\d+h?)(?:\/\d+h?)*$/.test(path)) throw new Error("Key origin path must look like 48h/0h/0h/2h.");
   if (!key) throw new Error("Key origin is missing the extended public key.");
@@ -6496,6 +6548,9 @@ function hodlStandardMsigPurpose(kind = hodlScriptKind()) {
   if (kind === "p2sh") return 45;
   return 48;
 }
+function hodlMultisigScriptLabel(kind) {
+  return kind === "p2sh" ? "Legacy" : kind === "p2sh-p2wsh" ? "Nested SegWit" : kind === "p2wsh" ? "Native SegWit" : kind === "p2tr" ? "Taproot" : "Unknown"
+}
 function hodlOriginScriptError(origin, kind, network, purpose, coinType = hodlCoinTypeFromNetwork(network), hardening = { purpose: true, coinType: true, account: true, address: false }) {
   let steps = hodlNormalizeOriginPath(origin.path).split("/");
   let expectedPurpose = `${purpose}${hardening.purpose ? "h" : ""}`;
@@ -6506,6 +6561,18 @@ function hodlOriginScriptError(origin, kind, network, purpose, coinType = hodlCo
     if (steps.length !== 3) return `${purpose === 87 ? "A BIP87" : "A Taproot"} origin must contain purpose, coin type, and account.`;
     if (!new RegExp(`^\\d+${hardening.account ? "h" : ""}$`).test(steps[2])) return `The account index must be ${hardening.account ? "hardened" : "unhardened"}.`;
     return ""
+  }
+  // BIP44/49/84 account keys double as co-signers in their script type's
+  // multisig standard: the purpose determines the script type. The 4-step
+  // BIP48-style form keeps working and falls through to the checks below.
+  if ((purpose === 44 || purpose === 49 || purpose === 84) && steps.length !== 4) {
+    let mapped = purpose === 44 ? "p2sh" : purpose === 49 ? "p2sh-p2wsh" : "p2wsh";
+    if (kind !== mapped) return `A BIP${purpose} origin belongs to ${hodlMultisigScriptLabel(mapped)} multisig; the selected script type is ${hodlMultisigScriptLabel(kind)}.`;
+    let coin = `${coinType}${hardening.coinType ? "h" : ""}`;
+    if (steps[1] !== coin) return `This key origin should use ${coin} as the selected coin type.`;
+    if (steps.length !== 3) return `A BIP${purpose} origin must contain purpose, coin type, and account.`;
+    if (!new RegExp(`^\\d+${hardening.account ? "h" : ""}$`).test(steps[2])) return `The account index must be ${hardening.account ? "hardened" : "unhardened"}.`;
+    return "";
   }
   if (kind === "p2wsh" || kind === "p2sh-p2wsh") {
     let coin = `${coinType}${hardening.coinType ? "h" : ""}`;
@@ -6546,8 +6613,19 @@ function hodlMultisigAccountWarning(summary) {
 function hodlMultisigOriginScriptKind(origin) {
   let steps = hodlNormalizeOriginPath(origin?.path).split("/").filter(Boolean);
   if (steps.length === 1) return "p2sh";
-  if (steps[0].replace(/h$/, "") === "86" && steps.length === 3) return "p2tr";
-  if (steps[0].replace(/h$/, "") !== "48" || steps.length !== 4) return null;
+  let purpose = steps[0].replace(/h$/, "");
+  // Three-step account origins determine the script type from the purpose:
+  // the singlesig BIPs map to their multisig counterpart, 86 is Taproot,
+  // 87 is deliberately script-agnostic, and anything else is a custom
+  // purpose that selects no script type.
+  if (steps.length === 3) {
+    if (purpose === "86") return "p2tr";
+    if (purpose === "84") return "p2wsh";
+    if (purpose === "49") return "p2sh-p2wsh";
+    if (purpose === "44") return "p2sh";
+    return null;
+  }
+  if (purpose !== "48" || steps.length !== 4) return null;
   if (steps[3] === "1h") return "p2sh-p2wsh";
   if (steps[3] === "2h") return "p2wsh";
   return null;
@@ -6587,9 +6665,6 @@ function hodlDetectMsigScriptSummary(values = hodlReadMsigXpubs()) {
     }
   }
   return hodlSummarizeMultisigScriptKinds(kinds);
-}
-function hodlMultisigScriptLabel(kind) {
-  return kind === "p2sh" ? "Legacy" : kind === "p2sh-p2wsh" ? "Nested SegWit" : kind === "p2wsh" ? "Native SegWit" : kind === "p2tr" ? "Taproot" : "Unknown"
 }
 function hodlSelectedLegacyMultisigStandard() {
   let purpose;
@@ -7119,16 +7194,67 @@ function hodlSyncMsigKeyAvatar(row) {
     if (fingerprint) hodlFillKeyTabLifehash(image, fingerprint);
   }
 }
-function hodlPickMsigSessionKey(state, row) {
-  let ta = row?.querySelector("textarea");
-  if (!ta) return;
+var hodlMsigKeyTarget = null;
+function hodlMsigNextKeyRow() {
+  let rows = [...document.querySelectorAll("#msig-keys .msig-key-row")];
+  if (hodlMsigKeyTarget?.isConnected) {
+    let selected = hodlMsigKeyTarget.closest(".msig-key-row");
+    if (selected && rows.includes(selected)) return selected;
+  }
+  return rows.find((row) => !row.querySelector("textarea")?.value.trim()) || null;
+}
+function hodlMsigSessionKeyOption(state) {
+  try {
+    let value = hodlMatchingMsigExport(state.result), parsed = hodlParseMultisigCosigner(value);
+    return { state, value, baseId: hodlMsigBaseKeyId(parsed) };
+  } catch {
+    return { state, value: "", baseId: "" };
+  }
+}
+function hodlMsigUsedBaseKeyIds(exceptRow = null) {
+  let used = new Set();
+  document.querySelectorAll("#msig-keys .msig-key-row").forEach((row) => {
+    if (row === exceptRow) return;
+    let parsed = hodlParseMsigRowKey(row);
+    if (parsed) used.add(hodlMsigBaseKeyId(parsed));
+  });
+  return used;
+}
+function hodlCreateMsigSessionKeyButton(option, className, active, onSelect, ariaLabel) {
+  let { state } = option, fingerprint = state.result?.masterFingerprint || state.name, button = document.createElement("button"), image = document.createElement("img"), label = document.createElement("span");
+  button.type = "button";
+  button.className = className + (active ? " active" : "");
+  button.dataset.keyId = String(state.id);
+  button.dataset.fingerprint = fingerprint;
+  button.setAttribute("aria-pressed", String(active));
+  button.setAttribute("aria-label", ariaLabel(fingerprint));
+  image.className = "key-tab-lifehash";
+  image.width = 22;
+  image.height = 22;
+  image.alt = "";
+  image.hidden = true;
+  if (fingerprint) hodlFillKeyTabLifehash(image, fingerprint);
+  label.textContent = fingerprint;
+  button.append(image, label);
+  button.onclick = onSelect;
+  return button;
+}
+function hodlPickMsigSessionKey(state, row = hodlMsigNextKeyRow()) {
+  let ta = row?.querySelector("textarea"), status = document.getElementById("msig-session-key-status");
+  if (!ta) {
+    if (status) status.textContent = "All co-signer inputs are filled. Focus or clear an input before choosing another key.";
+    return;
+  }
   let value = hodlMatchingMsigExport(state.result);
   if (!value) {
     hodlHint(ta, false, "That Key Station key has no compatible multisig export for the selected script type.");
     return;
   }
+  hodlMsigKeyTarget = ta;
   ta.value = value;
   ta.dispatchEvent(new Event("input"));
+  let position = [...document.querySelectorAll("#msig-keys .msig-key-row")].indexOf(row) + 1;
+  if (status) status.textContent = `Added ${state.result?.masterFingerprint || state.name} to co-signer ${position}.`;
 }
 function hodlStripMsigKeyPath(value) {
   return String(value ?? "").trim().replace(/\/(?:<\d+(?:;\d+)*>|\d+)\/\*$/, "").replace(/(\/\d+[hH']?)+$/, "");
@@ -7187,30 +7313,25 @@ function hodlSyncMsigKeyReuse(row) {
   if (clear) clear.hidden = !current;
 }
 function hodlRefreshMsigSessionPickers() {
-  let keys = hodlSessionMsigKeys();
+  let options = hodlSessionMsigKeys().map(hodlMsigSessionKeyOption), reuse = Boolean(document.getElementById("msig-reuse-session-keys")?.checked), used = hodlMsigUsedBaseKeyIds(), globalBox = document.getElementById("msig-session-keys"), status = document.getElementById("msig-session-key-status");
+  if (globalBox) {
+    let available = reuse ? options : options.filter((option) => !option.baseId || !used.has(option.baseId));
+    globalBox.replaceChildren();
+    globalBox.hidden = !available.length;
+    available.forEach((option) => {
+      globalBox.appendChild(hodlCreateMsigSessionKeyButton(option, "session-key-option", Boolean(option.baseId) && used.has(option.baseId), () => hodlPickMsigSessionKey(option.state), (fingerprint) => `Add Key Station key ${fingerprint} to the next co-signer input`));
+    });
+    if (status && !status.textContent && options.length && !available.length) status.textContent = "All compatible Key Station keys are assigned. Enable key reuse to keep them available.";
+    if (status && (!options.length || available.length) && status.textContent.startsWith("All compatible")) status.textContent = "";
+  }
   document.querySelectorAll("#msig-keys .msig-key-row").forEach((row) => {
-    let box = row.querySelector(".msig-session-keys"), ta = row.querySelector("textarea");
+    let box = row.querySelector(".msig-session-keys"), parsed = hodlParseMsigRowKey(row), currentBaseId = parsed ? hodlMsigBaseKeyId(parsed) : "", usedElsewhere = hodlMsigUsedBaseKeyIds(row);
     if (!box) return;
+    let available = reuse ? options : options.filter((option) => option.baseId === currentBaseId || !option.baseId || !usedElsewhere.has(option.baseId));
     box.replaceChildren();
-    box.hidden = !keys.length;
-    keys.forEach((state) => {
-      let fingerprint = state.result?.masterFingerprint || state.name, button = document.createElement("button"), image = document.createElement("img"), label = document.createElement("span");
-      button.type = "button";
-      button.className = "msig-session-key";
-      button.dataset.keyId = String(state.id);
-      button.dataset.fingerprint = fingerprint;
-      button.setAttribute("aria-pressed", "false");
-      button.setAttribute("aria-label", `Use Key Station key ${fingerprint} for this co-signer`);
-      image.className = "key-tab-lifehash";
-      image.width = 22;
-      image.height = 22;
-      image.alt = "";
-      image.hidden = true;
-      if (fingerprint) hodlFillKeyTabLifehash(image, fingerprint);
-      label.textContent = fingerprint;
-      button.append(image, label);
-      button.onclick = () => hodlPickMsigSessionKey(state, row);
-      box.appendChild(button);
+    box.hidden = !available.length;
+    available.forEach((option) => {
+      box.appendChild(hodlCreateMsigSessionKeyButton(option, "msig-session-key", Boolean(option.baseId) && option.baseId === currentBaseId, () => hodlPickMsigSessionKey(option.state, row), (fingerprint) => `Use Key Station key ${fingerprint} for this co-signer`));
     });
     hodlSyncMsigKeyAvatar(row);
     hodlSyncMsigKeyReuse(row);
@@ -7333,7 +7454,12 @@ function hodlFillKeys(values) {
       hodlInvalidateMsig();
       hodlSyncMsigKeyAvatar(row);
       hodlRefreshMsigSessionPickers();
-    }
+    };
+    ta.addEventListener("focus", () => {
+      hodlMsigKeyTarget = ta;
+      let status = document.getElementById("msig-session-key-status");
+      if (status) status.textContent = `The next selected Key Station key will fill co-signer ${i + 1}.`;
+    });
   }
   hodlBindMsigKeyReorder(box);
   hodlSyncMsigKeyMoveButtons();
@@ -7348,14 +7474,17 @@ function hodlFillKeys(values) {
 }
 function hodlMultisigPrefixCompatible(parsed, kind, purpose) {
   if (kind === "p2tr" || purpose === 87) return parsed.family === "x";
+  // BIP44/49/84 co-signers are singlesig account keys: generic xpub/tpub.
+  if ((purpose === 44 || purpose === 49 || purpose === 84) && parsed.depth === 3) return parsed.family === "x";
   if (parsed.scope === "singlesig") return parsed.family === "x";
   if (kind === "p2sh-p2wsh") return parsed.family === "y";
   if (kind === "p2wsh") return parsed.family === "z";
   return false;
 }
 function hodlMultisigAccountKeyError(parsed, kind, purpose, hardening = { purpose: true, coinType: true, account: true, address: false }) {
-  if (kind === "p2tr" || purpose === 87) {
-    if (parsed.depth !== 3) return `${purpose === 87 ? "BIP87" : "Taproot"} requires a depth-3 account key at m/purposeh/coinh/accounth; this key is depth ${parsed.depth}.`;
+  if (kind === "p2tr" || purpose === 87 || ((purpose === 44 || purpose === 49 || purpose === 84) && parsed.depth === 3)) {
+    let standard = purpose === 87 ? "BIP87" : kind === "p2tr" ? "Taproot" : `BIP${purpose}`;
+    if (parsed.depth !== 3) return `${standard} requires a depth-3 account key at m/purposeh/coinh/accounth; this key is depth ${parsed.depth}.`;
     if ((parsed.childNumber >= 0x80000000) !== hardening.account) return `The account index must be ${hardening.account ? "hardened" : "unhardened"}.`;
     return ""
   }
@@ -7420,7 +7549,7 @@ function hodlCheckXpub(ta) {
     let scriptOriginError = hodlOriginScriptError(parsed.origin, kind, network, purpose, coinType, hardening);
     if (scriptOriginError) throw new Error(scriptOriginError);
     if (hodlDuplicateMultisigKey(ta, parsed)) throw new Error("This duplicates another co-signer. Append a derivation path (like /1) after the extended key so its public keys differ.");
-    hodlHint(ta, true, `${parsed.prefix} origin, checksum, and derivation path look valid`);
+    hodlHint(ta, true, parsed.derivationPath ? `${parsed.prefix} origin, checksum, and derivation path look valid · branches and indexes derive below the path /${parsed.derivationPath}` : `${parsed.prefix} origin, checksum, and derivation path look valid`);
   } catch (error) {
     hodlHint(ta, false, error.message || "Not a valid multisig extended public key");
   }
@@ -7431,6 +7560,10 @@ function hodlResetMsigForm() {
   hodlSetMsigPurpose(48);
   let legacy = document.getElementById("msig-legacy-bip87");
   if (legacy) legacy.checked = false;
+  let reuseSessionKeys = document.getElementById("msig-reuse-session-keys"), sessionStatus = document.getElementById("msig-session-key-status");
+  if (reuseSessionKeys) reuseSessionKeys.checked = false;
+  if (sessionStatus) sessionStatus.textContent = "";
+  hodlMsigKeyTarget = null;
   hodlUpdateMsigLegacyControls();
   hodlSyncSelect(document.getElementById("msig-key-order"), "sorted");
   let advanced = document.getElementById("msig-advanced");
@@ -7464,7 +7597,14 @@ function hodlInitMsig() {
     branchStartInput = document.getElementById("msig-branch-start"),
     addressStartInput = document.getElementById("msig-address-start"),
     legacy = document.getElementById("msig-legacy-bip87"),
+    reuseSessionKeys = document.getElementById("msig-reuse-session-keys"),
     keyOrder = document.getElementById("msig-key-order");
+  reuseSessionKeys?.addEventListener("change", () => {
+    let status = document.getElementById("msig-session-key-status");
+    if (status) status.textContent = reuseSessionKeys.checked ? "Selected Key Station keys remain available for every co-signer input." : "Each selected Key Station key is removed from the other co-signer choices.";
+    hodlRefreshMsigSessionPickers();
+    hodlSyncMsigClearButton(true);
+  });
   script.addEventListener("change", () => {
     if (script.value !== "mixed") script.dataset.lastConcrete = script.value;
     hodlSetMsigPurpose(hodlStandardMsigPurpose(script.value));
@@ -7528,11 +7668,6 @@ function hodlInitMsig() {
   hodlElement("#msig-go").onclick = () => hodlHandleDerivationButton("msig", hodlBuildMsig);
   hodlElement("#msig-wipe").onclick = hodlWipeActiveMsig;
 }
-function hodlCmpBytes(a, b) {
-  let n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return a.length - b.length;
-}
 function hodlScriptKind() {
   return document.getElementById("msig-script-type")?.value || "p2wsh";
 }
@@ -7546,29 +7681,18 @@ function hodlXOnlyPubkey(pubkey) {
   return pubkey.length === 33 ? pubkey.slice(1) : pubkey.slice(0, 32)
 }
 
+// Multisig scripts and addresses are evaluated by rust-miniscript in the
+// WASM crate: the keys become a descriptor (sortedmulti/multi, or
+// sortedmulti_a/multi_a under a BIP341 NUMS internal key for Taproot) and the
+// crate derives the output. Sorting is the descriptor's job, as BIP67 and
+// BIP386 intend — multi keeps the listed order, sortedmulti ignores it.
 function hodlMsigAddr(pubkeys, m, network, kind, sorted = !0) {
-  if (kind === "p2tr") {
-    let xonly = [...pubkeys].map(hodlXOnlyPubkey);
-    if (sorted) xonly.sort(hodlCmpBytes);
-    let script = multisigTrScript(m, xonly),
-      out = addressFromScript(p2trLeafScript(hodlTaprootNumsKey(), script), network);
-    if (!out) throw new Error("Failed to build Taproot multisig address");
-    return {
-      address: out,
-      scriptHex: hodlHex.encode(script),
-      kind
-    }
-  }
-  let keys = [...pubkeys];
-  if (sorted) keys.sort(hodlCmpBytes);
-  let ms = multisigScript(m, keys);
-  if (kind === "p2wsh") {
-    return { address: addressFromScript(p2wshScript(ms), network), scriptHex: hodlHex.encode(ms), kind };
-  }
-  if (kind === "p2sh-p2wsh") {
-    return { address: addressFromScript(p2shScript(p2wshScript(ms)), network), scriptHex: hodlHex.encode(ms), kind };
-  }
-  return { address: addressFromScript(p2shScript(ms), network), scriptHex: hodlHex.encode(ms), kind };
+  let op = kind === "p2tr" ? sorted ? "sortedmulti_a" : "multi_a" : sorted ? "sortedmulti" : "multi";
+  let inner = `${op}(${m},${pubkeys.map((key) => hodlHex.encode(kind === "p2tr" ? hodlXOnlyPubkey(key) : key)).join(",")})`;
+  let descriptor = kind === "p2tr" ? `tr(${hodlHex.encode(hodlTaprootNumsKey())},${inner})` : kind === "p2wsh" ? `wsh(${inner})` : kind === "p2sh-p2wsh" ? `sh(wsh(${inner}))` : `sh(${inner})`;
+  let derived = descriptorDerive(descriptor, 0, network);
+  if (!derived.address) throw new Error("Failed to build the multisig address");
+  return { address: derived.address, scriptHex: derived.scriptHex, kind };
 }
 function hodlValidatedMsigInputs() {
   let coinType = hodlReadCoinType(document.getElementById("msig-network")), network = hodlNetworkFromCoinType(coinType), addressWindow = hodlReadAddressWindow("msig-"), branchWindow = hodlReadBranchWindow("msig-"), count = addressWindow.range, addressStart = addressWindow.start, branchStart = branchWindow.start, branchRange = branchWindow.range, hardening = hodlReadHardening("msig-"), n = Number(document.getElementById("msig-n")?.value), m = Number(document.getElementById("msig-m")?.value);
@@ -7633,15 +7757,15 @@ async function hodlBuildMsig(progress) {
     for (let branch = branchStart; branch < branchStart + branchRange; branch++) {
       let suffix = bip45 ? `/0/${branch}/*` : `/${branch}/*`, path = bip45 ? `m/0/${branch}/` : `m/${branch}/`, inner = keyTokens.map(key => key + suffix).join(","), descriptor = hodlMsigInnerDescriptor(kind, m, inner, sorted), rows = [];
       for (let index = addressStart; index < addressStart + count; index++) {
-        let publicKeys = nodes.map((node) => {
-          let key = node.derive(path + index).publicKey;
-          if (!key) throw new Error("Could not derive a public key");
-          return key;
-        });
+        // The branch descriptor is the source of truth: rust-miniscript
+        // derives the address from it, so what is shown here cannot drift
+        // from the watch-only descriptor exported below.
+        let derived = descriptorDerive(descriptor, index, network), publicKeys = derived.pubkeys.map((key) => hodlHex.decode(key));
+        if (!derived.address) throw new Error("Could not derive a multisig address");
         // Final defense behind the co-signer identity check: never emit a
         // script whose public keys repeat, whatever the supplied encodings were.
         if (new Set(publicKeys.map(hodlHex.encode)).size !== publicKeys.length) throw new Error("Two co-signers derive the same public key. Every co-signer must use a distinct extended public key.");
-        rows.push(Object.assign({ index, branch, role: hodlAddressBranchRole(branch), path: path.slice(1) + index }, hodlMsigAddr(publicKeys, m, network, kind, sorted)));
+        rows.push(Object.assign({ index, branch, role: hodlAddressBranchRole(branch), path: path.slice(1) + index }, { address: derived.address, scriptHex: derived.scriptHex, kind }));
         let pause = progress.step();
         if (pause) await pause;
       }
@@ -9644,11 +9768,7 @@ function hodlSetMode(mode) {
   hodlSeedMethod = hodlNormalizeSeedMethod(state?.seedMethod);
   hodlSeedZeroIndexed = Boolean(state?.seedZeroIndexed);
   hodlEntropyFormat = hodlNormalizeEntropyFormat(state?.entropyFormat);
-  [...hodlModesEl.children].forEach((button, index) => {
-    let active = hodlKeyModes[index] === hodlKeyMode;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
+  hodlSyncKeyModeSelect();
   hodlRenderKeyForm();
   hodlRestoreFormFields(state);
   hodlUpdateSeedLengthControl();
@@ -9763,11 +9883,7 @@ function hodlRestoreKey() {
     hodlWalletResult = null;
     hodlRevealPrivate = false;
     hodlAccountId = "bip84";
-    [...hodlModesEl.children].forEach((button, index) => {
-      let active = index === 0;
-      button.classList.toggle("active", active);
-      button.setAttribute("aria-pressed", String(active));
-    });
+    hodlSyncKeyModeSelect();
     hodlRenderKeyForm();
     let pass2 = document.getElementById("pass");
     if (pass2) {
@@ -9815,11 +9931,7 @@ function hodlRestoreKey() {
   hodlTargetWordCount = hodlSeedLengths[Number(state.targetWords)] ? Number(state.targetWords) : 24;
   hodlDiceCoinPositions = hodlNormalizeDiceCoinPositions(state.diceCoinPositions);
   hodlPickedLastWord = hodlDiceMethod === "dplus" ? state.dplusLastWord || "" : hodlDiceMethod === "bitbox" ? state.lastWord || "" : "";
-  [...hodlModesEl.children].forEach((button, index) => {
-    let active = hodlKeyModes[index] === hodlKeyMode;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
+  hodlSyncKeyModeSelect();
   hodlRenderKeyForm();
   let pass = document.getElementById("pass");
   if (pass) {
@@ -10186,6 +10298,7 @@ function hodlNewMsigState(name, msigId, msigNumber) {
       purposeHarden: true,
       legacyBip87: !1,
       keyOrder: "sorted",
+      reuseSessionKeys: false,
       xpubs: ["", "", ""],
       coinType: String(hodlDefaultCoinType()),
       coinTypeHarden: true,
@@ -10331,7 +10444,7 @@ function hodlMsigStateNeedsClear(state) {
   let fields = state.fields || {},
     xpubs = Array.isArray(fields.xpubs) ? fields.xpubs : [];
   return Boolean(state.result) || String(state.error ?? "").length > 0 || xpubs.some(value => String(value ?? "").length > 0) ||
-    String(fields.m ?? "2") !== "2" || String(fields.n ?? "3") !== "3" || String(fields.script ?? "p2wsh") !== "p2wsh" || String(fields.purpose ?? "48") !== "48" || fields.purposeHarden === false || Boolean(fields.legacyBip87) || String(fields.keyOrder ?? "sorted") !== "sorted" || String(fields.coinType ?? (fields.network === "testnet" ? "1" : "0")) !== "0" || fields.coinTypeHarden === false || fields.accountHarden === false || String(fields.branchStart ?? "0") !== "0" || Boolean(fields.branchHarden) || String(fields.branchRange ?? "2") !== "2" || String(fields.addressStart ?? "0") !== "0" || Boolean(fields.addressHarden) || String(fields.addressRange ?? fields.count ?? "5") !== "5"
+    String(fields.m ?? "2") !== "2" || String(fields.n ?? "3") !== "3" || String(fields.script ?? "p2wsh") !== "p2wsh" || String(fields.purpose ?? "48") !== "48" || fields.purposeHarden === false || Boolean(fields.legacyBip87) || String(fields.keyOrder ?? "sorted") !== "sorted" || Boolean(fields.reuseSessionKeys) || String(fields.coinType ?? (fields.network === "testnet" ? "1" : "0")) !== "0" || fields.coinTypeHarden === false || fields.accountHarden === false || String(fields.branchStart ?? "0") !== "0" || Boolean(fields.branchHarden) || String(fields.branchRange ?? "2") !== "2" || String(fields.addressStart ?? "0") !== "0" || Boolean(fields.addressHarden) || String(fields.addressRange ?? fields.count ?? "5") !== "5"
 }
 
 function hodlSyncMsigClearButton(capture = !1) {
@@ -10350,6 +10463,7 @@ function hodlCaptureMsig() {
   state.fields.purpose = document.getElementById("msig-purpose")?.value || "48";
   state.fields.legacyBip87 = hodlSelectedLegacyMultisigStandard() === "bip87";
   state.fields.keyOrder = hodlMsigKeysSorted() ? "sorted" : "listed";
+  state.fields.reuseSessionKeys = Boolean(document.getElementById("msig-reuse-session-keys")?.checked);
   hodlMergeMsigXpubs(state);
   state.fields.coinType = document.getElementById("msig-network")?.value || "0";
   let hardening = hodlReadHardening("msig-");
@@ -10389,6 +10503,10 @@ function hodlRestoreMsig() {
   hodlUpdateMsigLegacyControls();
   state.fields.keyOrder = state.fields.keyOrder === "listed" ? "listed" : "sorted";
   hodlSyncSelect(document.getElementById("msig-key-order"), state.fields.keyOrder);
+  let reuseSessionKeys = document.getElementById("msig-reuse-session-keys"), sessionStatus = document.getElementById("msig-session-key-status");
+  if (reuseSessionKeys) reuseSessionKeys.checked = Boolean(state.fields.reuseSessionKeys);
+  if (sessionStatus) sessionStatus.textContent = "";
+  hodlMsigKeyTarget = null;
   let advanced = document.getElementById("msig-advanced");
   if (advanced) advanced.open = state.fields.keyOrder === "listed";
   state.fields.coinType = String(state.fields.coinType ?? (state.fields.network === "testnet" ? 1 : 0));
@@ -10826,7 +10944,6 @@ function hodlSyncSegmentedControls() {
     if (!group.getClientRects().length) return;
     let buttons = [...group.children].filter((child) => child.matches(".tab"));
     group.classList.remove("is-stacked");
-    if (group.classList.contains("key-mode-control")) return;
     if (buttons.length < 2) return;
     let firstTop = buttons[0].offsetTop, wrapped = buttons.some((button) => Math.abs(button.offsetTop - firstTop) > 1);
     group.classList.toggle("is-stacked", wrapped);
