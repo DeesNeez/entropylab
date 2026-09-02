@@ -784,6 +784,11 @@ td { border-top: 1px solid var(--border); padding: 8px; vertical-align: top; fon
   background: var(--bg); color: var(--fg); font-size: 13px; font-weight: 600; letter-spacing: 0.04em;
 }
 .locale-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* enhanced-inputs.js swaps the select for a custom listbox whose form chrome
+   (44px minimum, control margin, mono face) would bulge out of the 52px bar.
+   In the header the generated control wears the header-button sizing instead. */
+.locale-control .custom-select { flex: 0 0 auto; width: auto; margin-top: 0; font-family: inherit; font-size: 14px; }
+.locale-control .custom-select-button { min-height: 40px; padding: 0 8px; border-radius: 8px; gap: 6px; font-weight: 600; letter-spacing: 0.04em; }
 .theme-toggle svg { display: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .theme-toggle[data-theme-mode="dark"] .theme-icon-dark, .theme-toggle[data-theme-mode="light"] .theme-icon-light { display: block; }
 .btn:is(.download-html, .save-recovery-sheet, .save-wallet-dat) {
