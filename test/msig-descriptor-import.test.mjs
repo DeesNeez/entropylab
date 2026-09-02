@@ -169,6 +169,24 @@ test("both markups ship the Paste descriptor panel and the app wires it", () => 
     assert.ok(markup.includes('id="msig-descriptor"'), "descriptor textarea");
     assert.ok(markup.includes('id="msig-descriptor-import"'), "import button");
     assert.ok(markup.includes('id="msig-descriptor-status"'), "status line");
+    assert.ok(markup.includes('id="msig-descriptor-import" type="button" disabled aria-disabled="true"'), "the import button ships disabled — the descriptor field starts empty");
   }
   assert.ok(app.includes('addEventListener("click", hodlImportMsigDescriptor)'), "the import button is wired");
+});
+
+test("the import button disables while any co-signer field holds text", () => {
+  const sync = loadSlice("hodlSyncMsigDescriptorImport");
+  assert.ok(sync.includes("button.disabled = occupied || empty"), "occupied fields or an empty descriptor disable the button");
+  assert.ok(sync.includes('aria-disabled'), "the disabled state is announced");
+  assert.ok(sync.includes("Clear the co-signer fields to import a descriptor."), "the hint explains the disabled state");
+  // The sync follows every path that changes what the co-signer fields hold:
+  // a fill rebuild, typing or a session-key pick (the textarea oninput), and
+  // the reset. The import itself still guards against occupied fields.
+  const fill = loadSlice("hodlFillKeys");
+  assert.ok(fill.includes("hodlSyncMsigDescriptorImport(true)"), "typing in a co-signer field re-syncs and drops any import result");
+  assert.ok(fill.includes("hodlSyncMsigDescriptorImport();"), "rebuilding the fields re-syncs");
+  const importer = loadSlice("hodlImportMsigDescriptor");
+  assert.ok(importer.includes("already hold keys"), "the import refuses occupied fields even if the button state is bypassed");
+  const fillAt = importer.indexOf("hodlFillKeys(imported.keys)"), pickersAt = importer.indexOf("hodlRefreshMsigSessionPickers()");
+  assert.ok(fillAt >= 0 && pickersAt > fillAt, "after the fields fill, the session pickers refresh so a co-signer that matches a Key Lab key shows its lifehash and pressed chip, as if picked by hand");
 });

@@ -6825,6 +6825,9 @@ function hodlImportMsigDescriptor() {
     hodlChangeMsigThreshold("n", String(imported.n), true);
     hodlChangeMsigThreshold("m", String(imported.m), true);
     hodlFillKeys(imported.keys);
+    // A co-signer whose fingerprint matches a Key Lab session key shows its
+    // lifehash and pressed chip, exactly as if the key was picked by hand.
+    hodlRefreshMsigSessionPickers();
     hodlValidatedMsigInputs();
     show(true, "Imported a " + imported.m + "-of-" + imported.n + " descriptor: " + (imported.kind ? hodlMultisigScriptLabel(imported.kind) : "kept the selected script type") + ", " + (imported.sorted ? "sorted" : "as listed") + " key order. Review the co-signers, then derive.");
   } catch (error) {
