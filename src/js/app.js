@@ -672,6 +672,15 @@ hodlRootEl.innerHTML = `
         <div class="msig-threshold-ticks" id="msig-threshold-ticks" aria-hidden="true"><span style="--msig-tick-position:0%">1</span><span style="--msig-tick-position:12.5%">2</span><span style="--msig-tick-position:25%">3</span><span style="--msig-tick-position:37.5%">4</span><span style="--msig-tick-position:50%">5</span><span style="--msig-tick-position:62.5%">6</span><span style="--msig-tick-position:75%">7</span><span style="--msig-tick-position:87.5%">8</span><span style="--msig-tick-position:100%">9</span></div>
         <p class="field-note msig-threshold-help" id="msig-threshold-help">Enter values, drag either handle, or use the arrow keys. Editing one value past the other moves both.</p>
       </fieldset>
+      <details class="msig-import" id="msig-import">
+        <summary>Paste descriptor</summary>
+        <label class="field">Multisig output descriptor
+          <textarea id="msig-descriptor" placeholder="wsh(sortedmulti(2,[fingerprint/48h/0h/0h/2h]Zpub…/0/*, …))" autocomplete="off" spellcheck="false" aria-describedby="msig-descriptor-help"></textarea>
+          <span class="field-note" id="msig-descriptor-help">Split a wallet-exported multisig descriptor into one co-signer field per key — the quorum, script type, and key order fill in too. Watch-only public keys only; a descriptor carrying private keys is refused.</span>
+        </label>
+        <button class="btn secondary" id="msig-descriptor-import" type="button" disabled aria-disabled="true">Import descriptor</button>
+        <p class="hint" id="msig-descriptor-status" role="status" hidden></p>
+      </details>
       <div id="msig-keys" class="msig-keys"></div>
       <p class="hint" id="msig-key-order-status" hidden></p>
       <p class="hint" id="msig-hint"></p>
@@ -6677,6 +6686,151 @@ function hodlParseMultisigCosigner(raw) {
   }
   return parsed;
 }
+// The Paste descriptor panel imports a whole multisig descriptor at once
+// (the full-descriptor counterpart of issue #175): the wrapper picks the
+// script type, multi/sortedmulti picks the key order, and the threshold and
+// one key expression per co-signer fill the quorum and the fields. The
+// #checksum is verified when present and every key is validated by the same
+// path a hand-pasted co-signer key takes. Anything the form cannot reproduce
+// — a fixed derivation path after a key, an extended private key, a Taproot
+// internal key other than the BIP341 NUMS point — is refused with directions.
+function hodlSplitDescriptorArgs(text) {
+  let args = [], depth = 0, start = 0;
+  for (let i = 0; i < text.length; i++) {
+    let ch = text[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === "," && depth === 0) {
+      args.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  args.push(text.slice(start));
+  return args.map((arg) => arg.trim());
+}
+function hodlUnwrapDescriptor(text, name) {
+  let prefix = name + "(", body = String(text ?? "").trim();
+  if (body.length <= prefix.length || !body.toLowerCase().startsWith(prefix) || !body.endsWith(")")) return null;
+  let depth = 0;
+  for (let i = prefix.length; i < body.length - 1; i++) {
+    if (body[i] === "(") depth++;
+    else if (body[i] === ")") {
+      depth--;
+      if (depth < 0) return null;
+    }
+  }
+  return depth === 0 ? body.slice(prefix.length, -1) : null;
+}
+function hodlMsigDescriptorKeyText(expr, index) {
+  let text = String(expr ?? "").trim(), label = "Co-signer " + (index + 1) + ": ";
+  if (!text) throw new Error(label + "the descriptor has an empty key position.");
+  let depth = 0, cut = -1;
+  for (let i = 0; i < text.length; i++) {
+    let ch = text[i];
+    if (ch === "[") depth++;
+    else if (ch === "]") depth--;
+    else if (ch === "/" && depth === 0) {
+      cut = i;
+      break;
+    }
+  }
+  let key = cut < 0 ? text : text.slice(0, cut), steps = cut < 0 ? [] : text.slice(cut + 1).split("/");
+  if (steps.length) {
+    if (steps[steps.length - 1] !== "*") throw new Error(label + "the descriptor derives this key through a fixed path (/" + steps.join("/") + "). The tool derives the receive and change branches itself — paste the account-level key instead.");
+    if (steps.slice(0, -1).some((step) => !/^(?:\d+|<\d+(?:;\d+)*>)$/.test(step))) throw new Error(label + "the derivation path after the extended key is not readable.");
+  }
+  let parsed = hodlParseMultisigCosigner(key);
+  if (parsed.isPrivate) throw new Error(label + "this descriptor carries an extended private key. This tool is watch-only — export the public descriptor from the wallet instead.");
+  return key;
+}
+function hodlParseMsigDescriptor(raw) {
+  let text = String(raw ?? "").trim();
+  if (!text) throw new Error("Paste a multisig output descriptor first.");
+  let hash = text.lastIndexOf("#");
+  if (hash >= 0) {
+    if (hodlDescriptorWithChecksum(text.slice(0, hash)) !== text) throw new Error("The descriptor checksum does not match. Re-copy the descriptor from the wallet that exported it.");
+    text = text.slice(0, hash);
+  }
+  let kind = null, body = text, sh = hodlUnwrapDescriptor(body, "sh"), wsh = hodlUnwrapDescriptor(body, "wsh"), tr = hodlUnwrapDescriptor(body, "tr");
+  if (sh) {
+    let nested = hodlUnwrapDescriptor(sh, "wsh");
+    kind = nested ? "p2sh-p2wsh" : "p2sh";
+    body = nested ?? sh;
+  } else if (wsh) {
+    kind = "p2wsh";
+    body = wsh;
+  } else if (tr) {
+    kind = "p2tr";
+    let parts = hodlSplitDescriptorArgs(tr);
+    if (parts.length !== 2) throw new Error("A Taproot multisig descriptor needs one internal key and one script path.");
+    if (parts[0].replace(/^\[[^\]]*\]/, "") !== "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0") throw new Error("This Taproot descriptor spends with its own internal key. The multisig tool builds Taproot over the BIP341 NUMS point, so this descriptor cannot be reproduced here.");
+    if (/[{}]/.test(parts[1])) throw new Error("This Taproot descriptor has several script paths. The multisig tool builds a single multisig leaf.");
+    body = parts[1];
+  }
+  let sorted = true, inner = null;
+  for (let name of kind === "p2tr" ? ["sortedmulti_a", "multi_a"] : ["sortedmulti", "multi"]) {
+    let candidate = hodlUnwrapDescriptor(body, name);
+    if (candidate) {
+      inner = candidate;
+      sorted = name.startsWith("sorted");
+      break;
+    }
+  }
+  if (inner === null) throw new Error("This is not a multisig descriptor. Expected multi(…) or sortedmulti(…) — a single-key descriptor can be pasted straight into a co-signer field.");
+  let args = hodlSplitDescriptorArgs(inner);
+  if (!/^\d+$/.test(args[0] || "") || Number(args[0]) < 1) throw new Error("The multisig threshold is missing or is not a whole number.");
+  let m = Number(args[0]), exprs = args.slice(1);
+  if (exprs.length > hodlMsigSliderLimit) throw new Error("This descriptor lists " + exprs.length + " keys; the tool builds at most " + hodlMsigSliderLimit + ".");
+  if (m > exprs.length) throw new Error("The threshold of " + m + " exceeds the " + exprs.length + " keys listed.");
+  return { m, n: exprs.length, sorted, kind, keys: exprs.map(hodlMsigDescriptorKeyText) };
+}
+// The Import button only runs on a fresh form: it stays disabled while any
+// co-signer field holds text (importing would have to overwrite it) or the
+// descriptor field is empty. A green/red import result keeps showing until
+// the user edits the descriptor or a co-signer field; the neutral "clear the
+// fields" hint is the only message this sync writes itself.
+function hodlSyncMsigDescriptorImport(fromFields = false) {
+  let button = document.getElementById("msig-descriptor-import"), field = document.getElementById("msig-descriptor"), status = document.getElementById("msig-descriptor-status");
+  if (!button) return;
+  let occupied = hodlReadMsigXpubs().some((value) => String(value).trim()), empty = !String(field?.value ?? "").trim();
+  button.disabled = occupied || empty;
+  button.setAttribute("aria-disabled", String(button.disabled));
+  if (!status) return;
+  if (fromFields) delete status.dataset.result;
+  if (status.dataset.result) return;
+  status.textContent = occupied ? "Clear the co-signer fields to import a descriptor." : "";
+  status.className = "hint";
+  status.hidden = !occupied;
+}
+function hodlImportMsigDescriptor() {
+  let status = document.getElementById("msig-descriptor-status"), show = (ok, msg) => {
+    if (!status) return;
+    status.textContent = msg;
+    status.className = "hint " + (ok ? "ok" : "bad");
+    status.hidden = !msg;
+    status.dataset.result = "1";
+  };
+  try {
+    let imported = hodlParseMsigDescriptor(document.getElementById("msig-descriptor")?.value);
+    if (hodlReadMsigXpubs().some((value) => String(value).trim())) throw new Error("Co-signer fields already hold keys. Clear them before importing a descriptor.");
+    let script = document.getElementById("msig-script-type"), keyOrder = document.getElementById("msig-key-order");
+    if (imported.kind && script) {
+      hodlSyncSelect(script, imported.kind);
+      script.dispatchEvent(new Event("change"));
+    }
+    if (keyOrder) {
+      hodlSyncSelect(keyOrder, imported.sorted ? "sorted" : "listed");
+      keyOrder.dispatchEvent(new Event("change"));
+    }
+    hodlChangeMsigThreshold("n", String(imported.n), true);
+    hodlChangeMsigThreshold("m", String(imported.m), true);
+    hodlFillKeys(imported.keys);
+    hodlValidatedMsigInputs();
+    show(true, "Imported a " + imported.m + "-of-" + imported.n + " descriptor: " + (imported.kind ? hodlMultisigScriptLabel(imported.kind) : "kept the selected script type") + ", " + (imported.sorted ? "sorted" : "as listed") + " key order. Review the co-signers, then derive.");
+  } catch (error) {
+    show(false, error.message || "The descriptor could not be imported.");
+  }
+}
 function hodlDetectMsigScriptSummary(values = hodlReadMsigXpubs()) {
   let kinds = [];
   for (let raw of values) {
@@ -7478,6 +7632,7 @@ function hodlFillKeys(values) {
       hodlInvalidateMsig();
       hodlSyncMsigKeyAvatar(row);
       hodlRefreshMsigSessionPickers();
+      hodlSyncMsigDescriptorImport(true);
     };
     ta.addEventListener("focus", () => {
       hodlMsigKeyTarget = ta;
@@ -7493,6 +7648,7 @@ function hodlFillKeys(values) {
   });
   hodlUpdateMsigHint();
   hodlUpdateMsigAccount();
+  hodlSyncMsigDescriptorImport();
   hodlUpdateMsigKeyOrderStatus();
   hodlRefreshMsigSessionPickers();
 }
@@ -7605,6 +7761,14 @@ function hodlResetMsigForm() {
   hodlUpdateAddressEstimate("msig-");
   hodlFillKeys([]);
   document.getElementById("msig-error").textContent = "";
+  let descriptor = document.getElementById("msig-descriptor"), descriptorStatus = document.getElementById("msig-descriptor-status"), descriptorPanel = document.getElementById("msig-import");
+  if (descriptor) descriptor.value = "";
+  if (descriptorStatus) {
+    delete descriptorStatus.dataset.result;
+    descriptorStatus.textContent = "";
+    descriptorStatus.hidden = true;
+  }
+  if (descriptorPanel) descriptorPanel.open = false;
 }
 function hodlInitMsig() {
   hodlBindMsigThresholdSlider();
@@ -7691,6 +7855,16 @@ function hodlInitMsig() {
   hodlResetMsigForm();
   hodlElement("#msig-go").onclick = () => hodlHandleDerivationButton("msig", hodlBuildMsig);
   hodlElement("#msig-wipe").onclick = hodlWipeActiveMsig;
+  document.getElementById("msig-descriptor-import")?.addEventListener("click", hodlImportMsigDescriptor);
+  document.getElementById("msig-descriptor")?.addEventListener("input", () => {
+    let status = document.getElementById("msig-descriptor-status");
+    if (status) {
+      delete status.dataset.result;
+      status.textContent = "";
+      status.hidden = true;
+    }
+    hodlSyncMsigDescriptorImport();
+  });
 }
 function hodlScriptKind() {
   return document.getElementById("msig-script-type")?.value || "p2wsh";
