@@ -1579,10 +1579,18 @@ test("workspace tabs place BIP-85 between Keys and Multi Signature", () => {
 test("one PSBT workspace contains PSBT / Nonce and PSBT Editor tabs", () => {
   assert.match(appSource, /\["psbt", "workspace\.psbt", "workspace\.psbtShort"\]/);
   assert.doesNotMatch(appSource, /\["psbted", "workspace\.psbted", "workspace\.psbtedShort"\]/);
-  assert.match(appSource, /id="psbt-tool-tabs"[^>]*role="tablist"/);
+  for (const markup of [template, appSource]) {
+    assert.match(markup, /<section class="key-manager no-print" id="psbt-manager" hidden>/);
+    assert.match(markup, /<div class="key-tab-strip">\s*<div class="key-tabs" id="psbt-tool-tabs" role="tablist" aria-label="PSBT stations">/);
+    assert.match(markup, /class="tab key-tab is-lab active"[^>]*data-psbt-tool="nonce"/);
+    assert.match(markup, /class="tab key-tab is-lab"[^>]*data-psbt-tool="editor"/);
+    assert.doesNotMatch(markup, /class="psbt-tool-tabs segmented-control/);
+  }
   assert.match(appSource, /data-psbt-tool="nonce"[^>]*data-i18n="workspace\.psbtNonce">PSBT \/ Nonce/);
   assert.match(appSource, /data-psbt-tool="editor"[^>]*data-i18n="workspace\.psbted">PSBT Editor/);
+  assert.match(appSource, /getElementById\("psbt-manager"\)/);
   assert.match(appSource, /function hodlShowPsbtTool\(id, focus = false\)/);
+  assert.match(appSource, /hodlInitTabDrag\(document\.getElementById\("psbt-tool-tabs"\)\)/);
   assert.match(appSource, /getElementById\("psbted-card"\)\.hidden = !visible \|\| hodlPsbtTool !== "editor"/);
   for (const markup of [template, appSource]) {
     assert.match(markup, /id="psbted-card"/);
@@ -1602,6 +1610,7 @@ test("one PSBT workspace contains PSBT / Nonce and PSBT Editor tabs", () => {
   assert.match(appSource, /import \{ initPsbtEditor \} from "\.\/psbt-editor\.js"/);
   assert.match(appSource, /initPsbtEditor\(\)/);
   assert.match(css, /#psbted-card\[hidden\]/);
+  assert.match(css, /#psbt-card:not\(\[hidden\]\), #psbted-card:not\(\[hidden\]\) \{[^}]*border-radius: 0 0 20px 20px;/s);
 });
 
 test("BIP-85 entry point sits beside Derive Key and opens the BIP-85 tab", () => {
@@ -1908,7 +1917,7 @@ test("session wallets use folder tabs that merge into the card", () => {
   assert.match(css, /\.key-manager \{ margin: 14px 0 -1px;/);
   assert.match(css, /\.key-tab \{[^}]*border-radius: 10px 10px 0 0;/s);
   assert.match(css, /\.key-tab\.active, \.key-tab-editing \{[^}]*border-bottom-color: var\(--surface\);/s);
-  assert.match(css, /#calc-card:not\(\[hidden\]\), #msig-card:not\(\[hidden\]\), #bip85-card:not\(\[hidden\]\), #sp-card:not\(\[hidden\]\) \{[^}]*border-radius: 0 0 20px 20px;/s);
+  assert.match(css, /#calc-card:not\(\[hidden\]\), #msig-card:not\(\[hidden\]\), #bip85-card:not\(\[hidden\]\), #sp-card:not\(\[hidden\]\), #psbt-card:not\(\[hidden\]\), #psbted-card:not\(\[hidden\]\) \{[^}]*border-radius: 0 0 20px 20px;/s);
   assert.match(css, /\.workspace-tab \{[^}]*border-radius: 10px 10px 0 0;/s);
   assert.match(appSource, /let lifehash = tab\.querySelector\("\.key-tab-lifehash"\);/);
   assert.doesNotMatch(appSource, /editor\.append\(hodlCreateKeyIcon\(state\.color\), input\)/);
