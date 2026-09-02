@@ -93,27 +93,55 @@ We prepare the home directory structure. We do **not** write to `/etc/passwd` di
 mkdir -p ovl_root/home/entropylab
 ```
 
-**4.2 USB Mount Logic (Udev & Shell Script)**
-This safely mounts an inserted FAT32 USB drive and assigns read/write ownership to the `entropylab` user (UID 1000).
+**4.2 Media Mount Logic (Udev & Shell Script)**
+This detects whether an inserted device is a USB drive or an SD card. 
+- SD cards are always mounted to `/mnt/sdcard`.
+- USB drives are mounted to `/mnt/usb_[LABEL]`, where [LABEL] is the name of the drive.
+This allows for multiple USB drives to be used simultaneously.
 
 ```zsh
-# Create the udev rule to trigger on USB insertion
+# Create the udev rule to trigger on ANY partition addition
 mkdir -p ovl_root/etc/udev/rules.d
-cat << 'EOF' > ovl_root/etc/udev/rules.d/99-usb-mount.rules
-ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_BUS}=="usb", RUN+="/usr/local/bin/usb-mount.sh"
+cat << 'EOF' > ovl_root/etc/udev/rules.d/99-automount.rules
+ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", RUN+="/usr/local/bin/auto-mount.sh %N"
 EOF
 
-# Create the shell script executed by udev
+# Create the smart mount script
 mkdir -p ovl_root/usr/local/bin
-cat << 'EOF' > ovl_root/usr/local/bin/usb-mount.sh
+cat << 'EOF' > ovl_root/usr/local/bin/auto-mount.sh
 #!/bin/sh
-# $DEVNAME is automatically provided by eudev during hotplug
-if [ -n "$DEVNAME" ]; then
-    mkdir -p /mnt/usb
-    mount -o uid=1000,gid=1000,umask=000 "$DEVNAME" /mnt/usb
+DEVNAME=$1
+
+# Identify the bus type (usb or mmc)
+BUS=$(udevadm info --query=property --name="$DEVNAME" | grep "ID_BUS=" | cut -d'=' -f2)
+
+# 1. Safety Check: If the device is already mounted (the boot device), skip it.
+if mount | grep -q "$DEVNAME"; then
+    exit 0
+fi
+
+# 2. Handle SD Cards
+if [ "$BUS" = "mmc" ]; then
+    mkdir -p /mnt/sdcard
+    mount -o uid=1000,gid=1000,umask=000 "$DEVNAME" /mnt/sdcard
+
+# 3. Handle USB Drives (Dynamic Naming)
+elif [ "$BUS" = "usb" ]; then
+    # Attempt to get the drive label using blkid
+    LABEL=$(blkid -s LABEL -o value "$DEVNAME")
+    
+    # If no label exists, use the device name (e.g., sda1) as a fallback
+    if [ -z "$LABEL" ]; then
+        LABEL=$(basename "$DEVNAME")
+    fi
+
+    # Create a unique mount point (e.g., /mnt/usb_MYDATA)
+    MNT_DIR="/mnt/usb_$LABEL"
+    mkdir -p "$MNT_DIR"
+    mount -o uid=1000,gid=1000,umask=000 "$DEVNAME" "$MNT_DIR"
 fi
 EOF
-chmod +x ovl_root/usr/local/bin/usb-mount.sh
+chmod +x ovl_root/usr/local/bin/auto-mount.sh
 ```
 
 **4.3 Assets & Service Config**
@@ -230,7 +258,7 @@ gsed -i 's/$/ ip=off/' boot/cmdline.txt
 
 ### 6. Distribution
 
-**Option A: Flash Directly to SD/USB**
+**Option A: Flash Directly to microSD/USB**
 
 ```zsh
 diskutil list
