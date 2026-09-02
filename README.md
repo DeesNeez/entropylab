@@ -180,8 +180,14 @@ gh attestation verify entropylab.html -R OogaBoogaX/entropylab
 The attestation is keyless (Sigstore) and bound to this repository's release
 workflow, so it authenticates the artifact independently of the hosting
 account. The checksum manifest alone only detects accidental corruption —
-always pair it with the attestation or with your own rebuild from source,
-which is byte-for-byte reproducible.
+always pair it with the attestation or reproduce the build from reviewed
+source. For a given Git revision, `npm run build` deterministically assembles
+`entropylab.html` from committed inputs, including the committed WASM modules;
+the revision to check out is stamped in the generated file. Rebuilding those
+modules from their Rust/C sources (`npm run build:wasm`) is separate, and its
+output is not currently asserted to be byte-identical across machines. CI
+still rebuilds the modules from source and runs the WASM binding tests against
+the fresh build (see [Building from source](#building-from-source)).
 
 An online version is available at [entropylab.online](https://entropylab.online)
 for convenient access. Do not enter seed phrases, private keys, or other secret
